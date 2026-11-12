@@ -1,6 +1,8 @@
 """다른 PC에서 git clone 한 뒤 빠진 것 점검 — GitHub에 올리지 않은 파일들을 확인하고 받는 방법을 알려 준다.
 
-usage: python src/check_setup.py        (.venv 를 만들기 전이면 아무 파이썬으로 실행해도 됨)
+usage: python src/check_setup.py [백업zip경로]   (.venv 를 만들기 전이면 아무 파이썬으로 실행해도 됨)
+  가중치 백업 CrowdFace_models_backup.zip 이 바탕화면·다운로드·프로젝트 폴더에 있으면 경로 없이도 찾아서
+  빠진 .pt 파일만 models/ 로 풀어 준다 (이미 있는 파일은 덮어쓰지 않음).
 왜 빠져 있나: 용량(가중치·데이터)·라이선스(CrowdHuman 재배포 금지) 때문에 .gitignore로 뺐다.
 자세한 받는 방법은 CLAUDE.md 8절 참고.
 """
@@ -40,11 +42,26 @@ check((ROOT / "refs/CrowdCounting-P2PNet/weights").exists(), "refs/CrowdCounting
       "git clone https://github.com/TencentYoutuResearch/CrowdCounting-P2PNet refs/CrowdCounting-P2PNet")
 
 print("3) 가중치 models/")
+# 백업 zip(CrowdFace_models_backup.zip)이 있으면 빠진 .pt를 models/ 로 자동으로 풀어 준다.
+# 찾는 곳: 실행할 때 준 경로 → 프로젝트 폴더 → 바탕화면 → 다운로드
+BACKUP = "CrowdFace_models_backup.zip"
+cands = [_pl.Path(a) for a in sys.argv[1:]] + [ROOT / BACKUP, ROOT.parent / BACKUP,
+                                               _pl.Path.home() / "Desktop" / BACKUP,
+                                               _pl.Path.home() / "Downloads" / BACKUP]
+zp = next((c for c in cands if c.is_file()), None)
+if zp:
+    import zipfile
+    with zipfile.ZipFile(zp) as z:
+        for n in z.namelist():
+            if n.endswith(".pt") and not (ROOT / "models" / n).exists():
+                (ROOT / "models").mkdir(exist_ok=True)
+                (ROOT / "models" / n).write_bytes(z.read(n))
+                print(f"  [복원] {n}  ← {zp}")
 check((ROOT / "models/yolo11n.pt").exists(), "models/yolo11n.pt (COCO 전신, 기존 X)",
       "python -c \"from ultralytics import YOLO; YOLO('yolo11n.pt')\" 후 생긴 yolo11n.pt 를 models/ 로 옮김")
 for k, h in (("head_base", "약 1.3시간"), ("head_p2", "약 2.5~5시간")):
     check((ROOT / f"models/{k}.pt").exists(), f"models/{k}.pt (우리가 학습한 머리 모델)",
-          f"팀 드라이브에서 받아 models/ 에 넣기, 또는 직접 학습: python src\\train_head.py "
+          f"백업 {BACKUP}을 바탕화면·다운로드에 두고 다시 실행(자동 복원), 또는 직접 학습: python src\\train_head.py "
           f"{k.split('_')[1]} 30 960 {16 if k == 'head_base' else 8}  ({h}, GPU 필요)")
 
 print("4) 데이터 data/ (학습·평가할 때만 필요, CrowdHuman 재배포 금지라 GitHub에 없음)")

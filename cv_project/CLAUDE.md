@@ -106,6 +106,13 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
 
 GitHub에는 코드·설정·보고서·평가 수치만 있다. 아래는 용량·라이선스 때문에 빠져 있다.
 
+**빠른 시작 (가중치 백업 zip이 있을 때 → 이 PC와 같은 상태로 시연·평가 가능)**
+1. GitHub Desktop → File → Clone repository → `kimhyeonjung0105/CrowdFace`
+2. 팀 드라이브의 `CrowdFace_models_backup.zip`(head_base·head_p2·yolo11n.pt, 15MB)을 **바탕화면이나 다운로드 폴더**에 받기 (압축은 안 풀어도 됨)
+3. `cv_project` 폴더에서 파이썬 환경 만들기: `py -3.13 -m venv .venv` → `.venv\Scripts\activate` → `python -m pip install -r requirements.txt`
+4. `python src/check_setup.py` → zip을 찾아 `.pt`를 `models/`로 **자동 복원**하고 남은 빠진 항목을 알려 줌 (zip이 다른 곳에 있으면 `python src/check_setup.py <zip경로>`)
+5. 기존 시연 코드까지 쓰려면 아래 표의 `refs/` 두 줄(git clone). 학습을 다시 할 때만 CrowdHuman 데이터 필요.
+
 | 빠진 것 | 언제 필요 | 받는 방법 |
 |---|---|---|
 | `.venv` (파이썬 환경) | 항상 | `py -3.13 -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt` |
@@ -113,7 +120,7 @@ GitHub에는 코드·설정·보고서·평가 수치만 있다. 아래는 용�
 | `refs/DM-Count` | 기존 시연(`crowd_*.py`) | `git clone https://github.com/cvlab-stonybrook/DM-Count refs/DM-Count` (가중치 포함) |
 | `refs/CrowdCounting-P2PNet` | 기존 시연(`crowd_heads.py`, `crowd_final.py`) | `git clone https://github.com/TencentYoutuResearch/CrowdCounting-P2PNet refs/CrowdCounting-P2PNet` (가중치 포함) |
 | `models/yolo11n.pt` | 항상 (전신 X, 학습 시작점) | `python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"` → 생긴 파일을 `models/`로 |
-| `models/head_base.pt`, `head_p2.pt` | 머리 탐지·평가 | **팀 구글 드라이브에서 받아 `models/`에** (각 약 5.5MB). 없으면 아래 데이터 준비 후 `python src/train_head.py base 30 960 16` / `p2 30 960 8` |
+| `models/head_base.pt`, `head_p2.pt` | 머리 탐지·평가 | **백업 zip + `check_setup.py`로 자동 복원** (위 빠른 시작). 없으면 아래 데이터 준비 후 `python src/train_head.py base 30 960 16` / `p2 30 960 8` |
 | `data/crowdhuman/` | 학습·평가 | 아래 다운로드 (약 11GB) |
 | `data/head_yolo/` | 학습·평가 | `python src\convert_crowdhuman.py data\crowdhuman\annotation_train.odgt data\crowdhuman\Images train` 그리고 같은 명령의 `val` 버전 |
 | `runs/head/*/weights` | 없어도 됨 | 곡선용 `results.csv`는 GitHub에 있음 |

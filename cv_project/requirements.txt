@@ -1,0 +1,8 @@
+ultralytics>=8.3
+torch          # GPU 학습: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
+torchvision
+opencv-python
+numpy
+pillow
+reportlab      # make_report.py (PDF)
+matplotlib     # make_report.py (그래프)

@@ -56,6 +56,8 @@ src/crowd_alarm.py    ★ 최종 시연: 우리 머리 모델 + 바닥 4점 원�
 src/convert_ht21.py   HT21(CroHD) 머리 정답 → YOLO 라벨 (01·04 + 02 앞 80% 학습, 02 뒤 20% 검증, 03은 시험용이라 제외)
 src/calib_conf.py     인원 세기용 신뢰도 기준 찾기 (검증 데이터에서 센 인원 합 = 실제 인원 합)
 src/eval_video.py     HT21 영상 평가: 전신 vs 머리 인원·㎡당 밀도·흐름 일치·경보 단계 → results/eval_video/
+src/tile_detect.py    타일링 탐지: 사진을 n×n 조각내 확대 탐지 + 잘린 박스 버리기 + 겹친 박스 합치기(NMS 직접 구현) (in.jpg out.jpg [격자 모델 conf])
+src/eval_tiles.py     타일링 평가: 보통 vs 2×2 vs 3×3, 방식마다 신뢰도 기준을 따로 맞춘 뒤 비교 (crowdhuman | ht21) → results/eval_tiles/
 src/cvio.py           한글 경로에서도 되는 imread/imwrite (Windows OpenCV는 한글 경로를 못 읽음)
 src/compare.py        YOLO vs DM-Count 비교 → results/cmp_*.jpg
 src/convert_crowdhuman.py  CrowdHuman .odgt → YOLO 머리 라벨 (data/head_yolo/)
@@ -128,7 +130,18 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
   - 시연 영상: `python src/crowd_alarm.py data/ht21/HT21/train/HT21-03/img1 results/demo_ht21_03.mp4 --model head_ht21 --conf 0.2 --levels 1,1.33,1.67` (80초, GitHub 제외)
 - 폴더가 한글 경로로 옮겨지며 `cv2.imread/imwrite`가 조용히 실패 → `src/cvio.py`로 교체 (영상 입출력은 한글 경로도 됨).
 - 보고서 PDF 갱신 (2026-11-14, 10쪽): 4-4 신뢰도 기준(0.15에서 전신 MAE 6.79·74.7%, 61명+ 30.3% / base 2.28·98.1% / P2 2.16·99.7%) + 5절 HT21 영상 평가·경보 비교. 다시 만들기: eval_heads → EVAL_CONF=0.15 eval_heads → eval_video → make_report.
-- 다음 할 일: 작은 머리(입력 크기·타일링) → 전신·머리 결합 → 발표 자료.
+- **타일링 실험** (2026-11-14, `tile_detect.py`·`eval_tiles.py`, head_base, 방식마다 '센 합 = 실제 합' 기준을 따로 맞춤):
+  | CrowdHuman 검증 | 기준 | MAE | 재현율 | 16px 미만 재현율 | ms/장(사진 읽기 포함) |
+  |---|---|---|---|---|---|
+  | 보통 | 0.15 | 2.28 | 79.2% | 54.8% | 22 |
+  | 타일 2×2 | 0.25 | **1.99** | 83.6% | **63.4%** | 59 |
+  | 타일 3×3 | 0.27 | 2.19 | 84.1% | 64.2% | 86 |
+  - P2 층으로 안 풀린 작은 머리가 **입력을 키우니 풀림**(+8.6%p) → "탐지층이 아니라 입력 해상도가 원인" 가설 확인. 2×2면 충분, 3×3은 느리기만 함.
+  - **HT21-03에서는 효과 없음**: 찾은 비율 head_base 72→70→67%, head_ht21 73→74→67%. 이 영상의 머리는 높이 26~45px(중앙 33px)로 작지 않음 → 놓치는 원인은 크기가 아니라 모양(검은 뒤통수). 3×3은 너무 확대돼 헛박스가 늘어남(conf 0.2에서 정밀도 81%→49%).
+  - 결론: 타일링은 머리가 작게 찍히는 먼 카메라용. 시연 영상(HT21-03)은 보통 탐지 그대로.
+  - 참고: head_ht21 기준을 0.01 단위로 다시 찾으면 0.22(찾은 비율 73.3%). 보고서·eval_video는 0.05 단위로 찾은 0.20(76.7%).
+- 보고서 4-5절에 타일링 반영 완료.
+- 다음 할 일: 전신·머리 결합 → 호모그래피 직접 구현 → 발표 자료.
 
 ## 8. 다른 PC에서 시작하기 (GitHub에 없는 것)
 > AI 도우미에게: 이 저장소를 새로 받은 PC라면 **먼저 `python src/check_setup.py`를 실행**해 빠진 항목을 사용자에게 알려 주고, 아래 방법으로 받도록 안내한다.

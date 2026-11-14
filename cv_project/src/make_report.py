@@ -3,6 +3,7 @@
   python src/eval_heads.py                    → results/eval/summary.json        (신뢰도 0.25)
   EVAL_CONF=0.15 python src/eval_heads.py     → results/eval_conf015/summary.json (인원 세기용 기준, 없으면 4-4절 생략)
   python src/eval_video.py data/ht21/HT21/train/HT21-03 → results/eval_video/      (현장 영상 평가, 없으면 5절 생략)
+  python src/eval_tiles.py crowdhuman → python src/eval_tiles.py ht21 → results/eval_tiles/ (타일링, 없으면 4-5절 생략)
 usage: python src/make_report.py
 결과: results/head_detection_report.pdf (그림은 results/report/)
 """
@@ -32,6 +33,9 @@ _c15 = ROOT / "results" / "eval_conf015" / "summary.json"
 SUM15 = json.loads(_c15.read_text(encoding="utf-8")) if _c15.exists() else None      # 신뢰도 0.15로 다시 센 결과
 _vid = ROOT / "results" / "eval_video" / "HT21-03.json"
 VIDEO = json.loads(_vid.read_text(encoding="utf-8")) if _vid.exists() else None       # HT21-03 현장 영상 평가
+_tl = ROOT / "results" / "eval_tiles"
+TILES = json.loads((_tl / "crowdhuman.json").read_text(encoding="utf-8")) if (_tl / "crowdhuman.json").exists() else None   # 타일링 (사진)
+TILES_V = json.loads((_tl / "ht21.json").read_text(encoding="utf-8")) if (_tl / "ht21.json").exists() else None             # 타일링 (영상)
 DEV = 0 if torch.cuda.is_available() else "cpu"
 FIG.mkdir(parents=True, exist_ok=True)
 
@@ -345,6 +349,10 @@ def build():
                        "기준을 같은 검증 사진으로 정했으므로 이 표의 0.15 결과는 약간 유리하게 나온 값이다(현장 영상 5절은 따로 정한 기준).", "cap"))
         story += [B(t) for t in calib_points()]
 
+    # ----- 4-5. 타일링 -----
+    if TILES:
+        story += tiles_section(W)
+
     # ----- 5. 현장 영상 평가 -----
     if VIDEO:
         story += video_section(W)
@@ -359,7 +367,7 @@ def build():
               B("P2는 메모리 때문에 batch 8로 학습했다(base는 16). 유효 batch는 64로 같지만 BatchNorm 통계는 작은 batch로 계산된다."),
               B("정답 인원은 무시 영역을 뺀 머리 라벨 개수다. 회색으로 지운 영역의 사람은 정답에도, 예측에도 들어가지 않는다."),
               P("다음 할 일", "h2"),
-              B("작은 머리(16px 미만, 전체의 30%)와 어두운 뒤통수 찾기: 입력 크기 키우기 · 사진 조각내 확대 탐지(타일링) 비교"),
+              B("어두운 뒤통수 찾기: 현장 영상 추가 학습을 늘리거나, 전신 박스로 보완"),
               B("전신·머리 결합 세기 (머리 중심이 전신 박스 위쪽 1/3 안이면 같은 사람)"),
               B("발표 자료와 시연 영상 정리 (src/crowd_alarm.py, 시연용 기준 표시 유지)")]
 
@@ -431,7 +439,7 @@ def size_points():
                        "<b>박스 위치를 더 정확히 맞춘 것</b>에서 나왔다(mAP50-95는 IoU 0.5~0.95를 평균해 위치 정확도를 더 많이 반영).")
             out.append("<b>작은 머리가 안 잡히는 이유(추정)</b>: 입력 960으로 줄이면서 원본에서 이미 작던 머리가 몇 픽셀까지 작아진다. "
                        "탐지층을 늘려도 입력에 정보가 없으면 찾을 수 없다. "
-                       "다음 실험은 입력 크기 키우기, 사진을 조각내 확대해서 탐지하기(타일링). 신뢰도 기준 맞추기는 4-4절.")
+                       "그래서 구조 대신 입력을 바꾸는 타일링을 직접 구현해 확인했다(4-5절). 신뢰도 기준 맞추기는 4-4절.")
     return out
 
 
@@ -455,6 +463,11 @@ def conclusion_points():
                                                 "그것을 현장 영상으로 추가 학습한 head_ht21을 쓴다."
                                                 if better else
                                                 "P2 구조가 원본보다 점수가 높지 않았다. 늘어난 계산량만큼 효과가 없었다는 것도 실험 결과로 보고한다."))
+    if TILES:
+        a, b = TILES["modes"]["full"]["calibrated"], TILES["modes"]["tile2"]["calibrated"]
+        out.append(f"<b>가설 → 실패 → 원인 → 해결</b>: 탐지층 추가(P2)로 안 풀린 작은 머리를, 사진을 조각내 확대해 넣는 타일링(직접 구현)으로 "
+                   f"16px 미만 재현율 {pct(a['recall_by_size'][0]['recall'])} → {pct(b['recall_by_size'][0]['recall'])}로 올렸다. "
+                   "원인은 구조가 아니라 입력 해상도였다. 단, 머리가 작지 않은 현장 영상에서는 효과가 없었다(4-5절).")
     if VIDEO:
         m = VIDEO["models"]
         out.append(f"<b>현장 영상에서도 같은 결론</b>: 전신은 붐빌수록 밀도를 낮게 보는 반대 방향(상관 {m['body']['maxd_corr']:.2f})이라 "
@@ -481,6 +494,41 @@ def calib_points():
     out.append(f"전신 YOLO는 기준을 낮춰도 {pct(b['body']['found_ratio'])}, 61명 이상 사진에서 "
                f"{pct(b['body']['by_crowd'][-1]['ratio'])}에 그친다. 가려진 몸은 기준을 낮춰도 박스 자체가 잘 나오지 않는다.")
     return out
+
+
+def tiles_section(W):
+    md = TILES["modes"]; TN = {"full": "보통 탐지 (전체 사진 1번)", "tile2": "타일링 2×2 + 전체", "tile3": "타일링 3×3 + 전체"}
+    st = [Spacer(1, 8), P("4-5. 타일링: 사진을 조각내 확대해서 탐지 (src/tile_detect.py, 직접 구현)", "h2"),
+          P("4-2에서 P2 탐지층을 넣어도 작은 머리 재현율은 그대로였다. 원인을 ‘입력을 960으로 줄이며 작은 머리 정보가 사라짐’으로 추정했으므로, "
+            "모델·가중치는 그대로 두고 <b>입력을 바꿨다</b>."),
+          B("사진을 n×n 조각으로 나눠(이웃과 20% 겹침) 조각마다 960 크기로 탐지 → 같은 머리가 더 크게 들어간다."),
+          B("조각의 안쪽 경계에 닿은 박스는 잘린 머리이므로 버리고, 조각보다 큰 머리를 위해 전체 사진 탐지도 한 번 더한다."),
+          B("여러 조각·전체 탐지에서 중복으로 잡힌 머리는 겹친 박스 합치기(NMS, IoU 0.5)를 직접 짜서 하나만 남긴다."),
+          Spacer(1, 4)]
+    rows = [["방식", "신뢰도<br/>기준", "인원 오차<br/>(MAE)", "맞힌 머리<br/>(재현율)", "16px 미만", "16~32px", "32px 이상", "시간<br/>(ms/장)"]]
+    for k, r in md.items():
+        s = r["calibrated"]; rs = s["recall_by_size"]
+        big = sum(x["found"] for x in rs[2:]) / max(sum(x["total"] for x in rs[2:]), 1)
+        rows.append([TN[k], f"{s['conf']:.2f}", f"{s['MAE']:.2f}", pct(s["recall"]), pct(rs[0]["recall"]), pct(rs[1]["recall"]), pct(big),
+                     f"{r['ms_per_image']:.0f}"])
+    st.append(table(rows, [W * .27, W * .09, W * .11, W * .12, W * .11, W * .10, W * .11, W * .09]))
+    st.append(P(f"CrowdHuman 검증 {TILES['images']:,}장, 머리 원본 구조(head_base). 타일링은 박스를 더 많이 내므로 방식마다 ‘센 인원 합 = 실제 인원 합’이 되는 "
+                "기준을 따로 맞춘 뒤 비교했다(같은 개수를 셀 때 진짜 머리를 얼마나 맞혔는지). 시간은 사진 읽기 포함이라 1쪽 표의 속도(추론만)와 다르다.", "cap"))
+    a, b = md["full"]["calibrated"], md["tile2"]["calibrated"]
+    st += [B(f"<b>작은 머리가 잡힌다</b>: 16px 미만 재현율 {pct(a['recall_by_size'][0]['recall'])} → "
+             f"<b>{pct(b['recall_by_size'][0]['recall'])}</b>, 전체 재현율 {pct(a['recall'])} → {pct(b['recall'])}, 인원 오차 {a['MAE']:.2f} → {b['MAE']:.2f}. "
+             "P2(구조 변경)로 안 되던 것이 입력 변경으로 됐다 → <b>원인은 탐지층이 아니라 입력 해상도</b>."),
+           B(f"2×2면 충분하다. 3×3은 재현율이 거의 같고 시간만 늘어난다({md['tile2']['ms_per_image']:.0f} → {md['tile3']['ms_per_image']:.0f} ms/장). "
+             f"대가는 속도: 보통 탐지의 약 {md['tile2']['ms_per_image'] / md['full']['ms_per_image']:.1f}배.")]
+    if TILES_V:
+        mv = TILES_V["models"]
+        f = lambda k: " → ".join(pct(mv[k][x]["count_ratio"]) for x in ("full", "tile2", "tile3"))
+        st.append(B(f"<b>현장 영상(HT21-03)에서는 효과가 없었다</b>: 찾은 비율(보통 → 2×2 → 3×3)이 원본 구조 {f('head_base')}, "
+                    f"현장 추가 학습 {f('head_ht21')}. 이 영상의 머리는 높이 26~45px(중앙 33px)로 작지 않다. "
+                    "놓치는 원인이 크기가 아니라 모양(검은 뒤통수 + 검은 외투)이라 확대해도 소용없고, 3×3은 너무 확대돼 헛박스가 늘었다."))
+        st.append(B("결론: 타일링은 머리가 작게 찍히는 먼 카메라용 도구다. 시연 영상은 보통 탐지를 그대로 쓴다. "
+                    f"(이 실험은 기준을 0.01 단위로 찾아 head_ht21 기준이 {mv['head_ht21']['full']['conf']:.2f}이고, 5절은 0.05 단위로 찾은 0.20이라 찾은 비율이 조금 다르다.)"))
+    return st
 
 
 VNAME = {"body": "전신 YOLO (입력 960)", "body_1920": "전신 YOLO (입력 1920)", "head_base": "머리 · 원본 구조",

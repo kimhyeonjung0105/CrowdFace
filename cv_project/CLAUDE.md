@@ -62,7 +62,7 @@ src/convert_crowdhuman.py  CrowdHuman .odgt → YOLO 머리 라벨 (data/head_yo
 models/head_p2.yaml   직접 수정한 구조: YOLO11n + P2 탐지층, nc=1
 notebooks/train_head_colab.ipynb  Colab 학습 (예비용, 실제 학습은 이 PC GPU)
 src/train_head.py     이 PC GPU 학습 (base|p2 [epochs imgsz batch] / resume) → models/head_<base|p2>.pt
-src/eval_heads.py     전신 vs 머리 인원 오차·머리 크기별 재현율 (CrowdHuman val) → results/eval/
+src/eval_heads.py     전신 vs 머리 인원 오차·머리 크기별 재현율 (CrowdHuman val) → results/eval/ (EVAL_CONF=0.15면 results/eval_conf015/)
 src/bench_speed.py    세 모델 번갈아 속도 재측정 → summary.json speed_ms 덮어씀 (eval 뒤에 실행)
 src/make_report.py    학습 결과 PDF → results/head_detection_report.pdf
 src/check_setup.py    다른 PC에서 clone 후 빠진 것 점검 (환경·refs·가중치·데이터) → 8절
@@ -127,7 +127,8 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
 - 시연 모드 `--levels 1,1.33,1.67` (서울시 기준의 1/3, 화면에 '시연용 기준' 표시). 정답 경보 5초 주의→12초 경계→17초 심각→…→39초 해제, head_ht21은 16초 주의→29초 해제.
   - 시연 영상: `python src/crowd_alarm.py data/ht21/HT21/train/HT21-03/img1 results/demo_ht21_03.mp4 --model head_ht21 --conf 0.2 --levels 1,1.33,1.67` (80초, GitHub 제외)
 - 폴더가 한글 경로로 옮겨지며 `cv2.imread/imwrite`가 조용히 실패 → `src/cvio.py`로 교체 (영상 입출력은 한글 경로도 됨).
-- 다음 할 일: 보고서 PDF에 영상 평가·신뢰도 기준 반영(P2 결론 수정) → 작은 머리(입력 크기·타일링) → 전신·머리 결합 → 발표 자료.
+- 보고서 PDF 갱신 (2026-11-14, 10쪽): 4-4 신뢰도 기준(0.15에서 전신 MAE 6.79·74.7%, 61명+ 30.3% / base 2.28·98.1% / P2 2.16·99.7%) + 5절 HT21 영상 평가·경보 비교. 다시 만들기: eval_heads → EVAL_CONF=0.15 eval_heads → eval_video → make_report.
+- 다음 할 일: 작은 머리(입력 크기·타일링) → 전신·머리 결합 → 발표 자료.
 
 ## 8. 다른 PC에서 시작하기 (GitHub에 없는 것)
 > AI 도우미에게: 이 저장소를 새로 받은 PC라면 **먼저 `python src/check_setup.py`를 실행**해 빠진 항목을 사용자에게 알려 주고, 아래 방법으로 받도록 안내한다.

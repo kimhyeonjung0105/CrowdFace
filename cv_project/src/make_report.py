@@ -1,5 +1,8 @@
 """머리 탐지 학습 결과 보고서(PDF) 만들기.
-먼저 python src/eval_heads.py 를 실행해 results/eval/summary.json 을 만든 뒤 실행.
+먼저 실행할 것:
+  python src/eval_heads.py                    → results/eval/summary.json        (신뢰도 0.25)
+  EVAL_CONF=0.15 python src/eval_heads.py     → results/eval_conf015/summary.json (인원 세기용 기준, 없으면 4-4절 생략)
+  python src/eval_video.py data/ht21/HT21/train/HT21-03 → results/eval_video/      (현장 영상 평가, 없으면 5절 생략)
 usage: python src/make_report.py
 결과: results/head_detection_report.pdf (그림은 results/report/)
 """
@@ -25,6 +28,10 @@ RUNS = ROOT / "runs" / "head"
 FIG = ROOT / "results" / "report"
 PDF = ROOT / "results" / "head_detection_report.pdf"
 SUMMARY = json.loads((ROOT / "results" / "eval" / "summary.json").read_text(encoding="utf-8"))
+_c15 = ROOT / "results" / "eval_conf015" / "summary.json"
+SUM15 = json.loads(_c15.read_text(encoding="utf-8")) if _c15.exists() else None      # 신뢰도 0.15로 다시 센 결과
+_vid = ROOT / "results" / "eval_video" / "HT21-03.json"
+VIDEO = json.loads(_vid.read_text(encoding="utf-8")) if _vid.exists() else None       # HT21-03 현장 영상 평가
 DEV = 0 if torch.cuda.is_available() else "cpu"
 FIG.mkdir(parents=True, exist_ok=True)
 
@@ -207,12 +214,13 @@ def build():
     sm = SUMMARY
 
     # ----- 표지 + 요약 -----
-    story += [P("머리 탐지 학습 결과 보고서", "title"),
+    story += [P("CrowdFace 머리 탐지 학습 결과 보고서", "title"),
               P(f"군중 밀집도 기반 인파 사고 조기 경보 · 추가 기능 Y① &nbsp;|&nbsp; 202104183 김현중, 202204201 김태섭 &nbsp;|&nbsp; {today}", "sub"),
               P("1. 한눈에 보기", "h1"),
               P("기존 YOLO는 사람 <b>전신</b>을 찾는다. 우리는 같은 YOLO 학습 코드를 이해하고 "
                 "<b>데이터·출력 클래스·모델 구조</b>를 바꿔 <b>머리</b>를 찾도록 직접 학습시켰다. "
-                f"CrowdHuman 검증 사진 {sm['images']:,}장(실제 인원 {sm['gt_total']:,}명)에서 인원을 세어 비교했다."),
+                f"CrowdHuman 검증 사진 {sm['images']:,}장(실제 인원 {sm['gt_total']:,}명)에서 인원을 세어 비교했고"
+                + (", 학습에 쓰지 않은 <b>현장 영상(HT21-03, 시부야 교차로)</b>에서도 확인했다." if VIDEO else ".")),
               Spacer(1, 6)]
     hdr = ["모델", "머리 mAP50", "머리 mAP50-95", "인원 오차<br/>(MAE, 명/장)", "찾은 비율<br/>(전체)",
            "찾은 비율<br/>(61명 이상 사진)", "속도<br/>(ms/장)"]
@@ -225,7 +233,8 @@ def build():
     story.append(table(rows, [W * .25, W * .11, W * .12, W * .13, W * .11, W * .15, W * .13]))
     story.append(P("mAP: 머리 박스 위치까지 맞혔는지(검증 4,370장, IoU 기준). 인원 오차: 사진마다 |센 인원 - 실제 인원|의 평균. "
                    "찾은 비율: 센 인원 합 ÷ 실제 인원 합(100%에 가까울수록 좋음). "
-                   f"속도: RTX 4070, 입력 960, 추론만({sm.get('speed_note', '')}).", "cap"))
+                   f"속도: RTX 4070, 입력 960, 추론만({sm.get('speed_note', '')}). "
+                   "이 표는 Ultralytics 기본 신뢰도 기준 0.25로 센 값(인원 세기용 기준 0.15 결과는 4-4절).", "cap"))
     story += [P("핵심 결과", "h2")] + [B(t) for t in summary_points()]
     story += [Spacer(1, 6), Image(str(fig_crowd()), W, W * 2.9 / 7.2),
               P("검증 사진을 실제 인원으로 묶어, 각 모델이 센 인원 ÷ 실제 인원을 비교했다. 100%보다 낮으면 덜 센 것.", "cap")]
@@ -319,28 +328,50 @@ def build():
                                                                   ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
     story.append(g)
 
-    # ----- 5. 정리 -----
-    story += [PageBreak(), P("5. 정리와 발표 포인트", "h1")] + [B(t) for t in conclusion_points()]
+    # ----- 4-4. 신뢰도 기준 -----
+    if SUM15:
+        story += [PageBreak(), P("4-4. 인원 세기용 신뢰도 기준 맞추기 (0.25 → 0.15)", "h2"),
+                  P("모델은 박스마다 ‘머리일 확신’(0~1)을 내고, 기준 이상인 박스만 센다. Ultralytics 기본값 0.25는 "
+                    "mAP 계산용이라 인원을 덜 세는 쪽(87%)이었다. 그래서 <b>검증 사진에서 센 인원 합 = 실제 인원 합</b>이 되는 "
+                    "기준을 찾았더니(src/calib_conf.py) 0.15였다."),
+                  Spacer(1, 4)]
+        rows = [["모델", "기준", "인원 오차 (MAE)", "찾은 비율 (전체)", "찾은 비율 (61명 이상)"]]
+        for k in MODEL_KEYS:
+            for c, d in ((0.25, SUMMARY), (0.15, SUM15)):
+                rows.append([NAME[k] if c == 0.25 else "", f"{c:.2f}", f"{d[k]['MAE']:.2f}", pct(d[k]["found_ratio"]),
+                             pct(d[k]["by_crowd"][-1]["ratio"])])
+        story.append(table(rows, [W * .30, W * .10, W * .18, W * .20, W * .22], zebra=False))
+        story.append(P("같은 검증 4,370장. 전신 YOLO도 같은 0.15로 다시 셌다(공정 비교). "
+                       "기준을 같은 검증 사진으로 정했으므로 이 표의 0.15 결과는 약간 유리하게 나온 값이다(현장 영상 5절은 따로 정한 기준).", "cap"))
+        story += [B(t) for t in calib_points()]
+
+    # ----- 5. 현장 영상 평가 -----
+    if VIDEO:
+        story += video_section(W)
+
+    # ----- 6. 정리 -----
+    story += [PageBreak(), P(f"{6 if VIDEO else 5}. 정리와 발표 포인트", "h1")] + [B(t) for t in conclusion_points()]
     story += [P("한계", "h2"),
-              B("평가는 CrowdHuman 검증 사진 기준이다. CCTV처럼 위에서 내려다본 사진에서는 따로 확인해야 한다."),
-              B("인원은 신뢰도 0.25 이상 박스 개수로 셌다. 기준값에 따라 더 세거나 덜 셀 수 있다."),
+              B("현장 영상 평가는 HT21-03 한 편(40초)이다. 바닥 넓이(10m×28m)는 횡단보도 줄 간격(0.9m 가정)과 맨홀 모양으로 "
+                "추정한 값이라 ㎡당 밀도에는 추정 오차가 들어 있다(인원 비교는 영향 없음)." if VIDEO else
+                "평가는 CrowdHuman 검증 사진 기준이다. CCTV처럼 위에서 내려다본 사진에서는 따로 확인해야 한다."),
+              B("신뢰도 기준은 데이터마다 다르다(CrowdHuman 0.15, 현장 추가 학습 모델 0.20). 새 현장에서는 다시 맞춰야 한다."),
               B("P2는 메모리 때문에 batch 8로 학습했다(base는 16). 유효 batch는 64로 같지만 BatchNorm 통계는 작은 batch로 계산된다."),
               B("정답 인원은 무시 영역을 뺀 머리 라벨 개수다. 회색으로 지운 영역의 사람은 정답에도, 예측에도 들어가지 않는다."),
               P("다음 할 일", "h2"),
-              B("머리 모델(head_base)을 crowd_final.py에 넣어 P2PNet(임시 대체)을 바꾸기"),
-              B("작은 머리(16px 미만, 전체의 30%) 찾기: 입력 크기 키우기 · 사진 조각내 확대 탐지(타일링) 비교"),
+              B("작은 머리(16px 미만, 전체의 30%)와 어두운 뒤통수 찾기: 입력 크기 키우기 · 사진 조각내 확대 탐지(타일링) 비교"),
               B("전신·머리 결합 세기 (머리 중심이 전신 박스 위쪽 1/3 안이면 같은 사람)"),
-              B("바닥 4점 원근 변환으로 ㎡당 밀도 → 경보 (응용)")]
+              B("발표 자료와 시연 영상 정리 (src/crowd_alarm.py, 시연용 기준 표시 유지)")]
 
     doc = SimpleDocTemplate(str(PDF), pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
-                            topMargin=16 * mm, bottomMargin=16 * mm, title="머리 탐지 학습 결과 보고서")
+                            topMargin=16 * mm, bottomMargin=16 * mm, title="CrowdFace 머리 탐지 학습 결과 보고서")
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     print("PDF:", PDF)
 
 
 def footer(c, d):
     c.saveState(); c.setFont("Malgun", 7.5); c.setFillColor(colors.HexColor(MUTED))
-    c.drawString(18 * mm, 9 * mm, "컴퓨터비전 미니프로젝트 · 머리 탐지 학습 결과")
+    c.drawString(18 * mm, 9 * mm, "컴퓨터비전 미니프로젝트 · CrowdFace 머리 탐지 학습 결과")
     c.drawRightString(A4[0] - 18 * mm, 9 * mm, str(d.page)); c.restoreState()
 
 
@@ -361,6 +392,14 @@ def summary_points():
                    f"인원 세기(MAE {sm['head_base']['MAE']:.2f} → {sm['head_p2']['MAE']:.2f})와 "
                    f"16px 미만 머리 찾기는 <b>나아지지 않았고</b> 속도는 "
                    f"{sm['speed_ms']['head_base']:.1f} → {sm['speed_ms']['head_p2']:.1f} ms/장으로 느려졌다 (4-2 참고).")
+        if SUM15:
+            out.append(f"단, 인원 세기용 신뢰도 기준 0.15로 맞추면 <b>P2가 조금 더 정확하게 센다</b> "
+                       f"(MAE base {SUM15['head_base']['MAE']:.2f} · P2 {SUM15['head_p2']['MAE']:.2f}, 4-4 참고).")
+    if VIDEO:
+        m = VIDEO["models"]; best = max((k for k in m if k.startswith("head")), key=lambda k: m[k]["count_ratio"])
+        out.append(f"현장 영상(위에서 내려다본 교차로, 화면당 평균 {VIDEO['gt_mean_count']:.0f}명): 전신은 "
+                   f"{pct(m['body']['count_ratio'])}~{pct(m['body_1920']['count_ratio'])}만 찾고 붐빌수록 밀도를 <b>더 낮게</b> 봤다"
+                   f"(상관 {m['body']['maxd_corr']:.2f}). 머리는 {pct(m[best]['count_ratio'])}를 찾고 붐비는 흐름을 따라갔다(5절).")
     return out
 
 
@@ -392,7 +431,7 @@ def size_points():
                        "<b>박스 위치를 더 정확히 맞춘 것</b>에서 나왔다(mAP50-95는 IoU 0.5~0.95를 평균해 위치 정확도를 더 많이 반영).")
             out.append("<b>작은 머리가 안 잡히는 이유(추정)</b>: 입력 960으로 줄이면서 원본에서 이미 작던 머리가 몇 픽셀까지 작아진다. "
                        "탐지층을 늘려도 입력에 정보가 없으면 찾을 수 없다. "
-                       "다음 실험은 입력 크기 키우기, 사진을 조각내 확대해서 탐지하기(타일링), 모델별 신뢰도 기준 맞추기.")
+                       "다음 실험은 입력 크기 키우기, 사진을 조각내 확대해서 탐지하기(타일링). 신뢰도 기준 맞추기는 4-4절.")
     return out
 
 
@@ -409,13 +448,109 @@ def conclusion_points():
     if len(HEAD_KEYS) == 2:
         better = RUN["head_p2"]["mAP95"] > RUN["head_base"]["mAP95"] if RUN.get("head_p2") and RUN.get("head_base") else None
         if better is not None:
-            out.append("<b>구조 수정의 효과</b>: " + ("P2 구조는 mAP가 올랐지만(박스 위치 정확도), 인원 세기와 작은 머리 찾기는 그대로였고 "
-                                                "속도는 느려졌다. 즉 <b>작은 머리 문제는 탐지층 추가만으로는 풀리지 않았다</b>. "
-                                                "가설을 세우고 직접 확인해 '안 됐다'까지 보여 주는 것도 실험 결과이고, "
-                                                "인원 세기에는 원본 구조(head_base)를 쓴다."
+            out.append("<b>구조 수정의 효과</b>: " + ("P2 구조는 mAP가 올랐고(박스 위치 정확도), 인원 세기용 기준(0.15)에서는 "
+                                                "인원 오차도 base보다 조금 작았다. 하지만 16px 미만 머리를 찾는 비율은 그대로였고 속도는 느려졌다. "
+                                                "즉 <b>작은 머리 문제는 탐지층 추가만으로는 풀리지 않았다</b>. "
+                                                "현장 영상에서는 두 구조의 찾은 비율이 같았으므로(5절) 시연에는 빠른 원본 구조와, "
+                                                "그것을 현장 영상으로 추가 학습한 head_ht21을 쓴다."
                                                 if better else
                                                 "P2 구조가 원본보다 점수가 높지 않았다. 늘어난 계산량만큼 효과가 없었다는 것도 실험 결과로 보고한다."))
+    if VIDEO:
+        m = VIDEO["models"]
+        out.append(f"<b>현장 영상에서도 같은 결론</b>: 전신은 붐빌수록 밀도를 낮게 보는 반대 방향(상관 {m['body']['maxd_corr']:.2f})이라 "
+                   "경보에 쓸 수 없고, 머리는 흐름을 따라간다. 다만 머리도 실제보다 적게 세므로 <b>놓치면 위험을 낮게 본다</b> "
+                   "→ 경보 기준을 정할 때 이 오차를 감안해야 한다.")
     return out
+
+
+# ---------- 4-4·5절 ----------
+def calib_points():
+    a, b = SUMMARY, SUM15; out = []
+    for k in HEAD_KEYS:
+        out.append(f"{NAME[k]}: MAE {a[k]['MAE']:.2f} → <b>{b[k]['MAE']:.2f}</b>, "
+                   f"찾은 비율 {pct(a[k]['found_ratio'])} → {pct(b[k]['found_ratio'])}")
+    if len(HEAD_KEYS) == 2:
+        win = min(HEAD_KEYS, key=lambda k: b[k]["MAE"])
+        lose = [k for k in HEAD_KEYS if k != win][0]
+        if a[win]["MAE"] > a[lose]["MAE"]:   # 기준을 바꾸니 순위가 뒤집힌 경우
+            out.append(f"<b>P2 결론이 바뀐다</b>: 기본 기준(0.25)에서는 {NAME[lose]}의 인원 오차가 작았지만, 기준을 맞추면 "
+                       f"<b>{NAME[win]}</b>가 더 정확하다. 0.25에서는 덜 세는 손해를 더 크게 봤던 것. "
+                       "모델 비교는 같은 ‘세기 조건’에서 해야 한다는 교훈.")
+        else:
+            out.append(f"기준을 맞춰도 {NAME[win]}가 더 정확하다.")
+    out.append(f"전신 YOLO는 기준을 낮춰도 {pct(b['body']['found_ratio'])}, 61명 이상 사진에서 "
+               f"{pct(b['body']['by_crowd'][-1]['ratio'])}에 그친다. 가려진 몸은 기준을 낮춰도 박스 자체가 잘 나오지 않는다.")
+    return out
+
+
+VNAME = {"body": "전신 YOLO (입력 960)", "body_1920": "전신 YOLO (입력 1920)", "head_base": "머리 · 원본 구조",
+         "head_p2": "머리 · P2 구조", "head_ht21": "머리 · 현장 영상 추가 학습"}
+
+
+def video_section(W):
+    v = VIDEO; m = v["models"]; st = []
+    st += [PageBreak(), P("5. 현장 영상 평가 (HT21-03, 학습에 쓰지 않은 영상)", "h1"),
+           P("CrowdHuman은 대부분 눈높이 사진이다. 실제 CCTV처럼 <b>위에서 내려다본 영상</b>에서도 되는지 "
+             "HT21(CroHD, MOTChallenge 머리 추적 데이터셋, CC BY-NC-SA 3.0)의 HT21-03(시부야 스크램블 교차로, "
+             f"{v['frames']}프레임 = 40초, 화면당 평균 {v['gt_mean_count']:.0f}명)으로 평가했다. 모든 프레임에 머리 박스 정답이 있다."),
+           B(f"바닥: 화면의 네 점 → {v['floor_m'][0]:.0f}m × {v['floor_m'][1]:.0f}m 직사각형으로 원근 변환(호모그래피). "
+             "넓이는 횡단보도 줄 간격 0.9m 가정 + 맨홀 타원 비율로 추정."),
+           B("밀도: 머리 박스 아래로 머리 높이×6 지점을 발 위치로 보고 바닥 좌표로 옮긴 뒤, 2m×2m 칸마다 ㎡당 인원. "
+             "칸별로 1초 평균(2m 칸은 1명 차이가 ㎡당 0.25명이라 프레임마다 출렁임)."),
+           B("정답(gt.txt)의 머리 박스도 똑같은 방법으로 밀도를 계산해 비교했다."),
+           B("head_ht21: head_base를 HT21-01·02·04(같은 데이터셋의 <b>다른</b> 장소)로 20 epoch 추가 학습(5분). "
+             "HT21-03은 학습에도, 신뢰도 기준(0.20, HT21-02 뒷부분으로 정함)에도 쓰지 않았다."),
+           Spacer(1, 4)]
+    rows = [["모델", "신뢰도<br/>기준", "찾은 비율", "인원 오차<br/>(명/프레임)", "최대 칸 밀도<br/>치우침 (명/㎡)",
+             "밀도 흐름 일치<br/>(상관계수)"]]
+    for k, r in m.items():
+        c = f"{r['maxd_corr']:.2f}"
+        rows.append([VNAME.get(k, k), f"{v['conf'][k]:.2f}", pct(r["count_ratio"]), f"{r['count_MAE']:.0f}",
+                     f"{r['maxd_bias']:+.2f}", f"<b>{c}</b>" if r["maxd_corr"] < 0 else c])
+    st.append(table(rows, [W * .27, W * .10, W * .12, W * .15, W * .17, W * .19]))
+    st.append(P("찾은 비율: 센 인원 합 ÷ 정답 인원 합. 최대 칸 밀도 치우침: 가장 붐비는 칸의 밀도(모델 - 정답)의 평균, "
+                "음수면 덜 붐비게 봄. 밀도 흐름 일치: 40초 동안 ‘가장 붐비는 칸 밀도’ 곡선이 정답 곡선과 같이 오르내리는 정도"
+                "(1이면 완전히 같고, 음수면 반대로 움직임).", "cap"))
+    st += [Image(str(ROOT / "results/eval_video/HT21-03_count.png"), W, W * 640 / 1440),
+           P("프레임마다 센 인원. 사람들이 횡단보도로 몰려들수록 머리 모델은 따라 늘지만 전신은 오히려 줄어든다.", "cap"),
+           Image(str(ROOT / "results/eval_video/HT21-03_density.png"), W, W * 640 / 1440),
+           P("가장 붐비는 2m 칸의 ㎡당 인원(1초 평균). 가로줄은 시연용 경보 기준.", "cap")]
+    pts = [f"<b>전신은 붐빌수록 반대로 본다</b>: 상관 {m['body']['maxd_corr']:.2f}(입력 960) / "
+           f"{m['body_1920']['maxd_corr']:.2f}(입력 1920). 위에서 내려다보면 몸이 서로 가려 사람이 몰릴수록 박스가 줄어든다. "
+           f"입력을 키워도 찾은 비율은 {pct(m['body_1920']['count_ratio'])}뿐. "
+           "<b>경보에 쓰면 가장 위험할 때 ‘괜찮다’고 한다.</b>",
+           f"머리 모델은 붐비는 흐름을 따라간다(상관 {m['head_base']['maxd_corr']:.2f}). 다만 처음 보는 환경이라 "
+           f"{pct(m['head_base']['count_ratio'])}만 찾았고, 놓친 것은 주로 <b>뒤돌아선 검은 머리 + 검은 외투</b>"
+           "(배경과 구분이 안 됨)였다."]
+    if "head_ht21" in m:
+        pts.append(f"현장 영상으로 5분 추가 학습(head_ht21)하니 찾은 비율 {pct(m['head_base']['count_ratio'])} → "
+                   f"<b>{pct(m['head_ht21']['count_ratio'])}</b>, 인원 오차 {m['head_base']['count_MAE']:.0f} → "
+                   f"{m['head_ht21']['count_MAE']:.0f}명. 같은 학습 코드로 현장에 맞출 수 있다.")
+    if "head_p2" in m:
+        pts.append(f"P2 구조는 이 영상에서 base와 찾은 비율이 거의 같았다({pct(m['head_base']['count_ratio'])} vs "
+                   f"{pct(m['head_p2']['count_ratio'])}).")
+    st += [P("결과 해석", "h2")] + [B(t) for t in pts]
+
+    lv = v["levels"]; demo = lv["시연"]
+    st += [PageBreak(), P("경보 비교", "h2"),
+           B(f"서울시 기준(㎡당 3·4·5명): 정답 밀도가 최대 {v['gt_max_density']:.2f}명/㎡(1초 평균)라 <b>40초 내내 ‘정상’</b>. "
+             "모든 모델도 정상으로 판단했다(일치율 100%). 실제로 위험한 장면은 아니었다."),
+           B("경보가 동작하는 모습을 보이기 위해 <b>시연용 기준</b>(서울시의 1/3: ㎡당 "
+             + " · ".join(f"{t:g}" for t in demo["thresholds"]) + "명)으로 같은 영상을 다시 판단했다. "
+             "시연 화면에도 ‘시연용 기준’을 표시한다."),
+           Spacer(1, 3)]
+    fmt = lambda a: " → ".join(f"{e[0]}초 {e[1]}" for e in a) or "경보 없음"
+    rows = [["", "시연 기준 경보 (같은 단계가 5초 이어지면 울림)"], ["정답 머리 박스", fmt(demo["gt_alarms"])]]
+    for k in m:
+        rows.append([VNAME.get(k, k), fmt(m[k].get("alarms_시연", []))])
+    st.append(table(rows, [W * .27, W * .73]))
+    st.append(P("시간은 영상 시작부터 초. ‘해제’는 모든 칸이 기준 아래로 5초 이어진 시각.", "cap"))
+    st += [B("전신 모델은 시연 기준에서도 <b>경보를 한 번도 울리지 못했다</b>. 머리 모델은 경보를 울리지만 정답보다 늦고 "
+             "낮은 단계(주의)에 그쳤다 → 사람을 놓친 만큼 밀도를 실제의 약 0.65배로 봤기 때문."),
+           B("시연 영상 만들기: <font size=8>python src/crowd_alarm.py data/ht21/HT21/train/HT21-03/img1 "
+             "results/demo_ht21_03.mp4 --model head_ht21 --conf 0.2 --levels 1,1.33,1.67</font> "
+             "(영상은 데이터 라이선스 때문에 GitHub에 올리지 않음)")]
+    return st
 
 
 if __name__ == "__main__":

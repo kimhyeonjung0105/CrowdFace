@@ -1,6 +1,6 @@
 """전신(X) vs 머리(Y①) 인원 세기 평가 — CrowdHuman 검증 4,370장.
 
-usage: python src/eval_heads.py [최대장수]
+usage: python src/eval_heads.py [최대장수]     (신뢰도 기준 바꾸기: EVAL_CONF=0.15 → results/eval_conf015/)
 비교 모델
   body      : COCO yolo11n.pt, 사람(0번) 클래스 전신 박스 개수 = 인원   (기존 기능 X)
   head_base : 우리가 학습한 머리 모델(원본 구조)   models/head_base.pt
@@ -15,11 +15,13 @@ import os, sys, json, csv, time, pathlib as _pl
 import numpy as np, torch
 ROOT = _pl.Path(__file__).resolve().parent.parent
 VAL = ROOT / "data" / "head_yolo"
-OUT = ROOT / "results" / "eval"
+# EVAL_CONF: 신뢰도 기준. 기본 0.25(Ultralytics 기본값, mAP용). 인원 세기용 0.15는 calib_conf.py로 검증 데이터에서 정함
+CONF = float(os.environ.get("EVAL_CONF", 0.25))
+OUT = ROOT / "results" / ("eval" if CONF == 0.25 else f"eval_conf{int(round(CONF * 100)):03d}")
 MODELS = _pl.Path(os.environ.get("EVAL_MODELS", ROOT / "models"))   # 시험용으로 다른 폴더 지정 가능
 from ultralytics import YOLO
 
-IMGSZ, CONF = 960, 0.25            # 학습과 같은 입력 크기, Ultralytics 기본 신뢰도 기준
+IMGSZ = 960                        # 학습과 같은 입력 크기
 CROWD_BINS = [(0, 10), (11, 30), (31, 60), (61, 10**9)]          # 사진 한 장의 정답 인원
 SIZE_BINS = [(0, 16), (16, 32), (32, 64), (64, 10**9)]           # 머리 박스 높이(픽셀)
 DEV = 0 if torch.cuda.is_available() else "cpu"

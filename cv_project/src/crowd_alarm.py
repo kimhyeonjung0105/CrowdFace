@@ -1,7 +1,7 @@
 """CrowdFace 최종 시연: 우리가 학습한 머리 YOLO + 바닥 4점 원근 변환 + 2m 칸 밀도 + 5초 경보.
 
 usage:
-  python src/crowd_alarm.py <입력 사진|영상> <출력 사진|영상> [옵션]
+  python src/crowd_alarm.py <입력 사진|영상|프레임 사진 폴더> <출력 사진|영상> [옵션]
   예) python src/crowd_alarm.py data/street.mp4 results/alarm.mp4
       python src/crowd_alarm.py in.jpg out.jpg --floor 330,470,1380,470,2300,1271,-600,1271 --size 12,20
 옵션
@@ -12,6 +12,8 @@ usage:
   --imgsz 960               YOLO 입력 크기 (학습 크기 960, 사람이 작게 찍히면 1280 이상)
   --foot 6                  머리 → 발 위치 보정(머리 박스 높이의 몇 배 아래가 발인지). 바로 위에서 찍으면 0
   --max-sec N               영상 앞부분 N초만 처리 (시험용)
+  --levels 3,4,5            주의·경계·심각 기준(서울시). 실제 영상이 기준에 못 미칠 때 경보 동작을 보이려면
+                            낮춘 기준(예: 1.5,2,2.5)을 쓰고, 화면에 '시연용 기준'으로 표시된다
 
 기존 crowd_final.py와 무엇이 다른가 (추가 기능 Y①·Y② 적용)
   1) 머리: P2PNet(남의 공개 모델) → 우리가 CrowdHuman으로 직접 학습한 head_base.pt
@@ -19,16 +21,30 @@ usage:
   3) 경보: 사진 한 장의 단계 → 영상에서 같은 단계 이상이 5초 이어질 때 경보, 시각·인원 CSV 기록
 """
 import os, sys, json, csv, argparse, pathlib as _pl
+from collections import deque
 import numpy as np, cv2
+from cvio import imread, imwrite   # 한글 경로에서도 되는 사진 읽기·쓰기 (cv2.imread/imwrite 대신)
 from PIL import Image, ImageDraw, ImageFont
 ROOT = _pl.Path(__file__).resolve().parent.parent
 from ultralytics import YOLO
 
 CELL = 2.0                                     # 칸 한 변 2m (계획서 기준)
 LEVELS = [(5, "심각", (220, 40, 40)), (4, "경계", (255, 140, 0)), (3, "주의", (240, 200, 0))]   # ㎡당 인원, 서울시 기준
+SEOUL = (3, 4, 5)
+LEVEL_NOTE = ["기준: 서울시 인파 관리 (㎡당 3·4·5명)"]
+
+
+def set_levels(ths):
+    """주의·경계·심각 기준 바꾸기 (시연 모드). 실제 영상이 기준에 못 미치면 경보가 안 울리므로,
+    경보 로직이 동작하는 모습을 보여 줄 때만 낮춘 기준을 쓰고 화면에 '시연용 기준'이라고 표시한다."""
+    t = sorted(ths)
+    LEVELS[:] = [(t[2], "심각", LEVELS[0][2]), (t[1], "경계", LEVELS[1][2]), (t[0], "주의", LEVELS[2][2])]
+    if tuple(t) != SEOUL:
+        LEVEL_NOTE[:] = [f"시연용 기준 (㎡당 {t[0]:g}·{t[1]:g}·{t[2]:g}명)", "실제 서울시 기준은 3·4·5명"]
 NORMAL = (0, "정상", (60, 170, 90))
 HOLD = 5.0                                     # 같은 단계 이상이 몇 초 이어지면 경보
-MIN_AREA = 2.0                                 # 이보다 좁은 가장자리 칸은 계산 안 함 (작은 칸은 한두 명만 있어도 가짜 고밀도)
+COUNT_CONF = 0.15                              # 인원 세기용 신뢰도 기준 (아래 main의 설명 참고)
+MIN_AREA = 2.0                                # 이보다 좁은 가장자리 칸은 계산 안 함 (작은 칸은 한두 명만 있어도 가짜 고밀도)
 
 
 def font(bold):
@@ -112,6 +128,20 @@ class Floor:
 
 
 # ---------------- 경보 (시간 조건) ----------------
+class Smoother:
+    """칸별 ㎡당 인원을 최근 SMOOTH초 평균. 2m 칸은 한 명 차이가 ㎡당 0.25명이라, 프레임마다 한두 명을 놓치거나
+    사람이 칸 경계를 넘나들면 값이 크게 출렁인다. 그러면 '5초 연속' 조건이 계속 초기화돼 경보가 안 울린다."""
+    def __init__(self, n):
+        self.buf = deque(maxlen=max(1, int(n)))
+
+    def __call__(self, dens):
+        self.buf.append(np.asarray(dens, float))
+        return np.mean(self.buf, axis=0)
+
+
+SMOOTH = 1.0   # 초
+
+
 class Alarm:
     """단계마다 '그 단계 이상'이 시작된 시각을 기억 → HOLD초 이상 이어진 가장 높은 단계가 경보.
     한 프레임만 튀는 값으로 경보가 울리거나, 경계↔심각을 오가며 시간이 초기화되는 것을 막는다."""
@@ -146,7 +176,8 @@ PANEL = 380
 
 
 def process(frame, model, floor, args):
-    r = model.predict(frame, imgsz=args.imgsz, conf=args.conf, device=args.device, verbose=False)[0]
+    # max_det: Ultralytics 기본은 한 장에 300개까지 → 초밀집 장면(정답 338명 프레임도 있음)에서 잘리므로 늘림
+    r = model.predict(frame, imgsz=args.imgsz, conf=args.conf, max_det=1000, device=args.device, verbose=False)[0]
     b = r.boxes.xyxy.cpu().numpy()
     # 바닥 원근 변환은 '바닥 위의 점'에만 맞다 → 머리 대신 발 위치를 쓴다.
     # 발은 가려져 안 보이므로 머리 박스 아래로 (머리 높이 × foot)만큼 내려 추정 (사람 키 ≈ 머리 7개).
@@ -156,6 +187,12 @@ def process(frame, model, floor, args):
 
 
 def draw(frame, b, cells, n_in, floor, cur, alarm, held, t, args):
+    # 작은 영상(예: 960x540)은 오른쪽 글자판이 다 안 들어가므로 화면용으로만 키워서 그린다 (탐지는 원래 크기로 이미 끝남)
+    k = max(1.0, 1000 / frame.shape[0])
+    quad = floor.quad
+    if k > 1:
+        frame = cv2.resize(frame, None, fx=k, fy=k, interpolation=cv2.INTER_LINEAR)
+        b = b * k; cells = [(d, n, p * k) for d, n, p in cells]; quad = quad * k
     img = frame.copy(); over = img.copy()
     for d, n, poly in cells:                                   # 칸 색: 정상은 테두리만, 주의 이상은 칠함
         lv = level_of(d)
@@ -164,7 +201,7 @@ def draw(frame, b, cells, n_in, floor, cur, alarm, held, t, args):
     img = cv2.addWeighted(over, 0.35, img, 0.65, 0)
     for d, n, poly in cells:
         cv2.polylines(img, [poly.astype(np.int32)], True, (235, 235, 235), 1, cv2.LINE_AA)
-    cv2.polylines(img, [floor.quad.astype(np.int32)], True, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.polylines(img, [quad.astype(np.int32)], True, (255, 255, 255), 2, cv2.LINE_AA)
     for x1, y1, x2, y2 in b.astype(int):
         cv2.rectangle(img, (x1, y1), (x2, y2), (52, 104, 235), 2, cv2.LINE_AA)     # 머리 모델 색(보고서와 같은 주황)
     H, W = img.shape[:2]
@@ -200,12 +237,33 @@ def draw(frame, b, cells, n_in, floor, cur, alarm, held, t, args):
         y += 76
     for th, name, c in LEVELS[::-1]:
         dr.rectangle([x0, y + 5, x0 + 18, y + 23], fill=c)
-        dr.text((x0 + 28, y), f"{name}  ㎡당 {th}명 이상", font=R(19), fill=(225, 230, 240)); y += 30
+        dr.text((x0 + 28, y), f"{name}  ㎡당 {th:g}명 이상", font=R(19), fill=(225, 230, 240)); y += 30
     note = [f"머리: 직접 학습한 YOLO11n ({args.model})", f"바닥 {floor.w:g}m × {floor.d:g}m, 원근 변환 · 칸 {CELL:g}m",
-            "기준: 서울시 인파 관리 (㎡당 3·4·5명)"]
+            *LEVEL_NOTE]
     for i, l in enumerate(note):
         dr.text((x0, H - 28 * len(note) - 12 + i * 28), l, font=R(16), fill=(150, 165, 185))
     return cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
+
+
+class FrameDir:
+    """프레임 사진 폴더(예: HT21 원본 img1/000001.jpg …)를 영상처럼 읽는다. 초당 프레임은 옆의 seqinfo.ini(frameRate), 없으면 25."""
+    def __init__(self, d):
+        self.files = sorted(p for p in d.iterdir() if p.suffix.lower() in (".jpg", ".png")); self.i = 0
+        ini = d.parent / "seqinfo.ini"
+        rate = [l.split("=")[1] for l in ini.read_text().splitlines() if l.startswith("frameRate")] if ini.exists() else []
+        self.fps = float(rate[0]) if rate else 25.0
+
+    def read(self):
+        if self.i >= len(self.files):
+            return False, None
+        self.i += 1
+        return True, imread(str(self.files[self.i - 1]))
+
+    def get(self, prop):
+        return self.fps if prop == cv2.CAP_PROP_FPS else 0
+
+    def set(self, prop, v):
+        self.i = int(v)
 
 
 def main():
@@ -213,13 +271,16 @@ def main():
     ap.add_argument("src"); ap.add_argument("out")
     ap.add_argument("--floor"); ap.add_argument("--size")
     ap.add_argument("--model", default="head_base"); ap.add_argument("--imgsz", type=int, default=960)
-    ap.add_argument("--conf", type=float, default=0.25); ap.add_argument("--foot", type=float, default=6.0)
+    # 신뢰도 기준 0.15: CrowdHuman 검증 4,370장에서 '센 인원 합 = 실제 인원 합'(100.4%)이 되는 값 (0.25면 87%로 덜 셈)
+    ap.add_argument("--conf", type=float, default=COUNT_CONF); ap.add_argument("--foot", type=float, default=6.0)
     ap.add_argument("--max-sec", type=float); ap.add_argument("--device", default=None)
+    ap.add_argument("--levels", default="3,4,5", help="주의,경계,심각 기준(㎡당 명). 시연 모드 예: 1.5,2,2.5")
     a = ap.parse_args()
+    set_levels(list(map(float, a.levels.split(","))))
     src, out = _pl.Path(a.src), _pl.Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
-    is_video = src.suffix.lower() in (".mp4", ".avi", ".mov", ".mkv")
-    cap = cv2.VideoCapture(str(src)) if is_video else None
-    first = cap.read()[1] if is_video else cv2.imread(str(src))
+    is_video = src.is_dir() or src.suffix.lower() in (".mp4", ".avi", ".mov", ".mkv")
+    cap = (FrameDir(src) if src.is_dir() else cv2.VideoCapture(str(src))) if is_video else None
+    first = cap.read()[1] if is_video else imread(str(src))
     if first is None:
         sys.exit(f"입력을 읽지 못했습니다: {src}")
 
@@ -236,24 +297,28 @@ def main():
     if not is_video:
         b, cells, n_in = process(first, model, floor, a)
         maxd = max((c[0] for c in cells), default=0)
-        cv2.imwrite(str(out), draw(first, b, cells, n_in, floor, level_of(maxd), None, 0, None, a))
+        imwrite(str(out), draw(first, b, cells, n_in, floor, level_of(maxd), None, 0, None, a))
         print(f"머리 {len(b)}명, 구역 안 {n_in}명, 최대 ㎡당 {maxd:.2f}명 → {level_of(maxd)[1]}  저장: {out}")
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    H, W = first.shape[:2] // np.array(2) * 2                     # mp4 코덱은 가로·세로가 짝수여야 해서 1픽셀 잘라 맞춤
-    vw = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"), fps, (W + PANEL, H))
-    alarm = Alarm(out.with_suffix(".csv")); i = 0
+    vw = None; alarm = Alarm(out.with_suffix(".csv")); i = 0; smooth = Smoother(SMOOTH * fps)
     while True:
         ok, fr = cap.read()
         if not ok or (a.max_sec and i / fps > a.max_sec):
             break
-        fr = fr[:H, :W]; t = i / fps
+        t = i / fps
         b, cells, n_in = process(fr, model, floor, a)
-        maxd = max((c[0] for c in cells), default=0)
+        sm = smooth([c[0] for c in cells])                          # 칸별 1초 평균 → 표시·단계·경보 모두 이 값
+        cells = [(d, n, poly) for d, (_, n, poly) in zip(sm, cells)]
+        maxd = float(sm.max()) if len(sm) else 0.0
         on, cur, held = alarm.update(t, maxd, n_in)
-        vw.write(draw(fr, b, cells, n_in, floor, cur, on, held, t, a)); i += 1
+        img = draw(fr, b, cells, n_in, floor, cur, on, held, t, a)
+        if vw is None:                                             # 첫 화면 크기로 저장기 생성
+            H, W = img.shape[0] // 2 * 2, img.shape[1] // 2 * 2    # mp4 코덱은 가로·세로가 짝수여야 함
+            vw = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
+        vw.write(img[:H, :W]); i += 1
         if i % int(fps * 5) == 0:
             print(f"  {t:6.1f}초 처리 중 (머리 {len(b)}명, 최대 ㎡당 {maxd:.2f}명)")
     vw.release(); alarm.save()

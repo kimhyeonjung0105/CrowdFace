@@ -12,6 +12,7 @@ def _font(bold=True):
 FONT_B, FONT_R = _font(True), _font(False)
 # -------------------------------------------------------------
 import sys, torch, numpy as np, cv2
+from cvio import imread, imwrite   # 한글 경로에서도 되는 사진 읽기·쓰기 (cv2.imread/imwrite 대신)
 from PIL import Image
 from torchvision import transforms
 sys.path.insert(0, REFS + "/DM-Count")
@@ -39,4 +40,4 @@ for i, p in enumerate(imgs):
     over = cv2.addWeighted(a, 0.5, d, 0.5, 0)
     cv2.putText(yb, f"YOLO: {ny}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0,0,255), 3)
     cv2.putText(over, f"DM-Count: {nd:.0f}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255,255,255), 3)
-    cv2.imwrite(f"{RESULTS}/cmp_{i}.jpg", np.hstack([yb, over]))
+    imwrite(f"{RESULTS}/cmp_{i}.jpg", np.hstack([yb, over]))

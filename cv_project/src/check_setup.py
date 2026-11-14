@@ -64,7 +64,14 @@ for k, h in (("head_base", "약 1.3시간"), ("head_p2", "약 2.5~5시간")):
           f"백업 {BACKUP}을 바탕화면·다운로드에 두고 다시 실행(자동 복원), 또는 직접 학습: python src\\train_head.py "
           f"{k.split('_')[1]} 30 960 {16 if k == 'head_base' else 8}  ({h}, GPU 필요)")
 
-print("4) 데이터 data/ (학습·평가할 때만 필요, CrowdHuman 재배포 금지라 GitHub에 없음)")
+print("4) 시연 영상 data/ht21/ (HT21 CroHD, CC BY-NC-SA라 GitHub에 없음)")
+h3 = ROOT / "data/ht21/HT21/train/HT21-03"
+check(count(h3 / "img1") == 1000, f"HT21-03 프레임 (지금 {count(h3 / 'img1'):,}장 / 1,000장)", "CLAUDE.md 8절의 HT21 다운로드", need="시연용")
+check((h3 / "img1.floor.json").exists(), "HT21-03 바닥 설정 img1.floor.json", "CLAUDE.md 8절의 floor 값으로 만들기", need="시연용")
+check((ROOT / "models/head_ht21.pt").exists(), "models/head_ht21.pt (현장 영상 추가 학습)",
+      "백업 zip 또는 python src/convert_ht21.py → python src/train_head.py ht21 20 960 8", need="시연용")
+
+print("5) 데이터 data/ (학습·평가할 때만 필요, CrowdHuman 재배포 금지라 GitHub에 없음)")
 ch = ROOT / "data/crowdhuman"
 check((ch / "annotation_val.odgt").exists() and (ch / "annotation_train.odgt").exists(),
       "data/crowdhuman/annotation_train.odgt · annotation_val.odgt", "CLAUDE.md 8절의 다운로드 명령", need="학습용")

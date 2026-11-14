@@ -6,6 +6,7 @@ import sys, pathlib as _pl
 ROOT = _pl.Path(__file__).resolve().parent.parent
 MODELS = str(ROOT / "models")
 import cv2
+from cvio import imread, imwrite   # 한글 경로에서도 되는 사진 읽기·쓰기 (cv2.imread/imwrite 대신)
 from ultralytics import YOLO
 
 # ▶ 실행용 기본값 — 사진·입력 크기를 바꾸려면 여기만 고치면 됨
@@ -22,7 +23,7 @@ n = len(r.boxes)
 img = r.plot(labels=False, conf=False, line_width=2)
 cv2.rectangle(img, (0, 0), (520, 60), (0, 0, 0), -1)
 cv2.putText(img, f"YOLO person: {n}  (imgsz {imgsz})", (12, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 2)
-cv2.imwrite(out, img)
+imwrite(out, img)
 print("persons", n, "imgsz", imgsz)
 print("결과 사진:", out)
 import os

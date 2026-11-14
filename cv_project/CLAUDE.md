@@ -52,7 +52,11 @@ src/crowd_density.py  DM-Count 밀도 지도          (in.jpg out.jpg)
 src/crowd_result.py   YOLO 전신 + 밀도, slope·horizon 출력 (in.jpg out.jpg)
 src/crowd_heads.py    P2PNet 머리 위치              (in.jpg out.jpg slope horizon)
 src/crowd_final.py    머리+밀도+2m 칸+경보 패널     (in.jpg out.jpg slope horizon)
-src/crowd_alarm.py    ★ 최종 시연: 우리 머리 모델 + 바닥 4점 원근 변환 + 2m 칸 + 5초 경보 (사진·영상, --floor/--size 또는 클릭)
+src/crowd_alarm.py    ★ 최종 시연: 우리 머리 모델 + 바닥 4점 원근 변환 + 2m 칸 + 5초 경보 (사진·영상·프레임 폴더, --floor/--size 또는 클릭, --levels 시연 기준)
+src/convert_ht21.py   HT21(CroHD) 머리 정답 → YOLO 라벨 (01·04 + 02 앞 80% 학습, 02 뒤 20% 검증, 03은 시험용이라 제외)
+src/calib_conf.py     인원 세기용 신뢰도 기준 찾기 (검증 데이터에서 센 인원 합 = 실제 인원 합)
+src/eval_video.py     HT21 영상 평가: 전신 vs 머리 인원·㎡당 밀도·흐름 일치·경보 단계 → results/eval_video/
+src/cvio.py           한글 경로에서도 되는 imread/imwrite (Windows OpenCV는 한글 경로를 못 읽음)
 src/compare.py        YOLO vs DM-Count 비교 → results/cmp_*.jpg
 src/convert_crowdhuman.py  CrowdHuman .odgt → YOLO 머리 라벨 (data/head_yolo/)
 models/head_p2.yaml   직접 수정한 구조: YOLO11n + P2 탐지층, nc=1
@@ -105,7 +109,25 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
   - 경보: 단계별로 '그 단계 이상' 시작 시각을 기억 → 5초 이상 이어진 가장 높은 단계. 오르내림으로 인한 헛경보 방지. 경보 시작·해제를 `<출력>.csv`에 기록.
   - 1.png(눈높이 사진, 바닥 12m×20m 가정)에서 머리 123명, 최대 ㎡당 1.75명 정상. 경보 로직은 가짜 밀도 열로 시험(8초 주의, 17초 경계, 20초 해제).
   - 바닥 설정은 `<입력>.floor.json`에 저장돼 다음 실행부터 재사용.
-- 다음 할 일: **위에서 내려다본 시연 영상 확보**(직접 촬영 또는 공개 영상) → 작은 머리(입력 크기·타일링) 비교 → 전신·머리 결합 → ShanghaiTech 평가.
+- **인원 세기용 신뢰도 기준 0.15** (2026-11-14, `calib_conf.py`): Ultralytics 기본 0.25는 mAP용이라 덜 셈(87%).
+  CrowdHuman 검증에서 0.15면 찾은 비율 100.4%, MAE base 3.10→2.28 · **P2 3.40→2.17 (P2가 더 정확해짐)** → 보고서 P2 결론 갱신 필요.
+- **시연·평가 영상 = HT21(CroHD) 데이터셋** (MOTChallenge Head Tracking 21, CC BY-NC-SA 3.0, 위에서 내려다본 군중 + 머리 박스 정답, `data/ht21/`).
+  - 시험 영상 HT21-03(시부야 스크램블 교차로, 40초, 화면당 평균 258명). 바닥 10m×28m = 횡단보도 줄 간격 0.9m 가정 + 맨홀 타원 비율 0.21로 추정 (`img1.floor.json`).
+  - 정답 기준 실제 밀도는 ㎡당 최대 2.6명(1초 평균) → **서울시 기준으로는 40초 내내 정상**(모든 모델도 정상, 100% 일치).
+  - 결과 (`results/eval_video/HT21-03.json`, 그래프 `_count.png`·`_density.png`):
+    | 모델 | 찾은 비율 | 인원 MAE | 밀도 흐름 일치(상관) |
+    |---|---|---|---|
+    | 전신 YOLO 960 / 1920 | 6% / 27% | 241 / 187 | **-0.38 / -0.51** (붐빌수록 오히려 낮게 봄) |
+    | head_base / head_p2 | 72% / 72% | 72 / 72 | 0.79 / 0.72 |
+    | head_ht21 (현장 추가 학습) | **77%** | **60** | 0.75 |
+  - 머리 모델은 처음 보는 환경에서 뒤돌아선 검은 머리+검은 외투를 놓침 → 밀도를 실제의 약 0.65배로 봄 → **놓치면 위험을 낮게 본다**(발표 포인트).
+- `head_ht21.pt` (2026-11-14): head_base에서 시작해 HT21-01·02·04로 20 epoch 추가 학습 (batch 8, 5분). HT21-02 검증 mAP50 0.70→0.82. 신뢰도 기준 0.20(HT21-02 검증에서 102%).
+  - batch 16은 한 장에 머리 200개라 GPU 메모리가 넘쳐 5.6초/회로 느려짐 → batch 8은 8.5회/초.
+- 경보 보완: 칸별 밀도를 **1초 평균**한 뒤 단계 판단 (2m 칸은 1명 차이 = ㎡당 0.25명이라 프레임마다 출렁여 '5초 연속'이 계속 초기화됨).
+- 시연 모드 `--levels 1,1.33,1.67` (서울시 기준의 1/3, 화면에 '시연용 기준' 표시). 정답 경보 5초 주의→12초 경계→17초 심각→…→39초 해제, head_ht21은 16초 주의→29초 해제.
+  - 시연 영상: `python src/crowd_alarm.py data/ht21/HT21/train/HT21-03/img1 results/demo_ht21_03.mp4 --model head_ht21 --conf 0.2 --levels 1,1.33,1.67` (80초, GitHub 제외)
+- 폴더가 한글 경로로 옮겨지며 `cv2.imread/imwrite`가 조용히 실패 → `src/cvio.py`로 교체 (영상 입출력은 한글 경로도 됨).
+- 다음 할 일: 보고서 PDF에 영상 평가·신뢰도 기준 반영(P2 결론 수정) → 작은 머리(입력 크기·타일링) → 전신·머리 결합 → 발표 자료.
 
 ## 8. 다른 PC에서 시작하기 (GitHub에 없는 것)
 > AI 도우미에게: 이 저장소를 새로 받은 PC라면 **먼저 `python src/check_setup.py`를 실행**해 빠진 항목을 사용자에게 알려 주고, 아래 방법으로 받도록 안내한다.
@@ -130,6 +152,15 @@ GitHub에는 코드·설정·보고서·평가 수치만 있다. 아래는 용�
 | `data/crowdhuman/` | 학습·평가 | 아래 다운로드 (약 11GB) |
 | `data/head_yolo/` | 학습·평가 | `python src\convert_crowdhuman.py data\crowdhuman\annotation_train.odgt data\crowdhuman\Images train` 그리고 같은 명령의 `val` 버전 |
 | `runs/head/*/weights` | 없어도 됨 | 곡선용 `results.csv`는 GitHub에 있음 |
+
+HT21 시연·평가 영상 (MOTChallenge, CC BY-NC-SA 3.0 — GitHub에 올리지 않음, 약 4.1GB):
+```bash
+mkdir -p data/ht21 && cd data/ht21 && curl -L -O https://motchallenge.net/data/HT21.zip
+python -c "import zipfile; z=zipfile.ZipFile('HT21.zip'); z.extractall('.', [n for n in z.namelist() if n.startswith('HT21/train/')])"
+```
+- Git Bash의 unzip은 4GB 넘는 zip을 못 풀어서 파이썬으로 푼다. 바닥 설정 `HT21/train/HT21-03/img1.floor.json`은 CLAUDE.md 7절 값으로 다시 만든다:
+  `{"floor": [[462,200],[1458,200],[1773.5,1010],[146.5,1010]], "size": [10,28]}`
+- 추가 학습 데이터: `python src/convert_ht21.py` → `python src/train_head.py ht21 20 960 8`
 
 CrowdHuman 다운로드 (Hugging Face `sshao0516/CrowdHuman`, CC BY-NC 4.0 — **받은 파일은 절대 GitHub에 올리지 않는다**):
 ```bash

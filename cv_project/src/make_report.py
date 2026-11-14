@@ -5,6 +5,7 @@ usage: python src/make_report.py
 """
 import os, re, csv, json, datetime, pathlib as _pl
 import numpy as np, cv2, torch
+from cvio import imread, imwrite   # 한글 경로에서도 되는 사진 읽기·쓰기 (cv2.imread/imwrite 대신)
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -146,7 +147,7 @@ def fig_examples(src):
         for x1, y1, x2, y2 in r.boxes.xyxy.cpu().numpy().astype(int):
             cv2.rectangle(img, (x1, y1), (x2, y2), c, 3)
         s = 900 / img.shape[1]; img = cv2.resize(img, None, fx=s, fy=s)
-        p = FIG / f"ex_{k}.jpg"; cv2.imwrite(str(p), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        p = FIG / f"ex_{k}.jpg"; imwrite(str(p), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
         out.append((k, p, len(r.boxes)))
     return out
 

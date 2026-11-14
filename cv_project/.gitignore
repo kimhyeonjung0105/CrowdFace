@@ -20,3 +20,5 @@ runs/**
 !runs/head/*/
 !runs/head/*/results.csv
 !runs/head/*/args.yaml
+# 시연 영상 (크고, HT21 영상은 CC BY-NC-SA라 따로 공유)
+results/*.mp4

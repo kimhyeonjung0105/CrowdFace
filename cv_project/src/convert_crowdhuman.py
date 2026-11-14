@@ -23,6 +23,7 @@ usage: python src/convert_crowdhuman.py <annotation.odgt> <이미지 폴더> <su
 """
 import sys, json, shutil, pathlib as _pl
 import cv2
+from cvio import imread, imwrite   # 한글 경로에서도 되는 사진 읽기·쓰기 (cv2.imread/imwrite 대신)
 
 ROOT = _pl.Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "head_yolo"        # CrowdHuman 파생물 → data/ 는 .gitignore 대상(재배포 금지)
@@ -40,7 +41,7 @@ def clip(x, y, w, h, W, H):
 
 def convert_one(rec, img_dir, subset):
     src = img_dir / (rec["ID"] + ".jpg")
-    img = cv2.imread(str(src))
+    img = imread(str(src))
     if img is None:
         return None
     H, W = img.shape[:2]
@@ -80,7 +81,7 @@ def convert_one(rec, img_dir, subset):
 
     dst = OUT / "images" / subset / src.name
     if painted:
-        cv2.imwrite(str(dst), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        imwrite(str(dst), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
     else:
         shutil.copyfile(src, dst)                                # 칠할 게 없으면 원본 그대로(화질 유지)
     (OUT / "labels" / subset / (src.stem + ".txt")).write_text("\n".join(lines))

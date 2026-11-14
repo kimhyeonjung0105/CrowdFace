@@ -52,6 +52,7 @@ src/crowd_density.py  DM-Count 밀도 지도          (in.jpg out.jpg)
 src/crowd_result.py   YOLO 전신 + 밀도, slope·horizon 출력 (in.jpg out.jpg)
 src/crowd_heads.py    P2PNet 머리 위치              (in.jpg out.jpg slope horizon)
 src/crowd_final.py    머리+밀도+2m 칸+경보 패널     (in.jpg out.jpg slope horizon)
+src/crowd_alarm.py    ★ 최종 시연: 우리 머리 모델 + 바닥 4점 원근 변환 + 2m 칸 + 5초 경보 (사진·영상, --floor/--size 또는 클릭)
 src/compare.py        YOLO vs DM-Count 비교 → results/cmp_*.jpg
 src/convert_crowdhuman.py  CrowdHuman .odgt → YOLO 머리 라벨 (data/head_yolo/)
 models/head_p2.yaml   직접 수정한 구조: YOLO11n + P2 탐지층, nc=1
@@ -83,7 +84,7 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
 - `.venv`, `refs/`, `models/*.pt`, `data/`의 큰 파일은 Git에 올리지 않는다(.gitignore).
 - 발표 수치는 출처가 확인된 것만 쓴다(위 동기 출처 참고).
 
-## 7. 현재 상태 (2026-11-11)
+## 7. 현재 상태 (2026-11-14)
 - 코드 5개와 결과 사진(밀도 지도 461명, 머리 345개, 최종 ㎡당 1.7명 정상)은 개발 서버에서 실행 확인.
 - 이 PC(Windows)에서도 5개 모두 실행 확인 (2026-11-11): `.venv`는 Python 3.13(3.14는 오래된 참조 코드 호환 우려로 피함), torch 2.15 CPU, Ultralytics 8.4. DM-Count·P2PNet 가중치는 git clone에 포함됨. 시험 입력은 `refs/DM-Count/example_images/1.png` (DM 173명, P2PNet 머리 145개, 최대 ㎡당 0.7명 정상).
 - 머리 데이터 준비 완료 (2026-11-11): CrowdHuman val(4,370장)만 받아 `src/convert_crowdhuman.py`로 변환 → `data/head_yolo/` (처음엔 val만으로 시험 → 이후 train 01~03까지 받아 최종 train 15,000장 · val 4,370장). mask·ignore 영역은 회색으로 칠해 지움. 머리의 30%가 16px 미만 → P2 탐지층 근거.
@@ -99,7 +100,12 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
   | head_p2 | 0.828 | 0.516 | 3.40 | 84.9% | 77.2% | 6.8 |
   - 핵심: 붐빌수록 전신은 못 셈(101%→21%), 머리는 유지(95%→79%). 인원 오차 62% 감소.
   - P2: mAP는 올랐지만(박스 위치 정확도) 16px 미만 머리 재현율은 base 48.7% / P2 48.4%로 그대로, 속도는 느려짐 → **인원 세기에는 head_base 사용**. "탐지층 추가만으로 작은 머리 문제는 안 풀림"을 실험 결과로 발표.
-- 다음 할 일: head_base를 `crowd_final.py`에 넣어 P2PNet 대체 → 작은 머리(입력 크기·타일링) 비교 → 전신·머리 결합 → 바닥 4점 원근 변환 밀도·경보.
+- `src/crowd_alarm.py` 완성 (2026-11-14): P2PNet 대신 head_base, 키·화각 가정 대신 바닥 4점 호모그래피.
+  - 발 위치 = 머리 박스 아래로 머리 높이×6 (원근 변환은 바닥 평면에만 맞으므로). 바로 위 카메라면 `--foot 0`.
+  - 경보: 단계별로 '그 단계 이상' 시작 시각을 기억 → 5초 이상 이어진 가장 높은 단계. 오르내림으로 인한 헛경보 방지. 경보 시작·해제를 `<출력>.csv`에 기록.
+  - 1.png(눈높이 사진, 바닥 12m×20m 가정)에서 머리 123명, 최대 ㎡당 1.75명 정상. 경보 로직은 가짜 밀도 열로 시험(8초 주의, 17초 경계, 20초 해제).
+  - 바닥 설정은 `<입력>.floor.json`에 저장돼 다음 실행부터 재사용.
+- 다음 할 일: **위에서 내려다본 시연 영상 확보**(직접 촬영 또는 공개 영상) → 작은 머리(입력 크기·타일링) 비교 → 전신·머리 결합 → ShanghaiTech 평가.
 
 ## 8. 다른 PC에서 시작하기 (GitHub에 없는 것)
 > AI 도우미에게: 이 저장소를 새로 받은 PC라면 **먼저 `python src/check_setup.py`를 실행**해 빠진 항목을 사용자에게 알려 주고, 아래 방법으로 받도록 안내한다.

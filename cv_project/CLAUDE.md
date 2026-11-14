@@ -58,6 +58,9 @@ src/calib_conf.py     인원 세기용 신뢰도 기준 찾기 (검증 데이터
 src/eval_video.py     HT21 영상 평가: 전신 vs 머리 인원·㎡당 밀도·흐름 일치·경보 단계 → results/eval_video/
 src/tile_detect.py    타일링 탐지: 사진을 n×n 조각내 확대 탐지 + 잘린 박스 버리기 + 겹친 박스 합치기(NMS 직접 구현) (in.jpg out.jpg [격자 모델 conf])
 src/eval_tiles.py     타일링 평가: 보통 vs 2×2 vs 3×3, 방식마다 신뢰도 기준을 따로 맞춘 뒤 비교 (crowdhuman | ht21) → results/eval_tiles/
+src/fuse_count.py     전신+머리 결합 세기: 머리 중심이 전신 박스 위쪽 1/3 안이면 같은 사람, 가까운 짝부터 1:1 (in.jpg out.jpg [모델 머리conf 전신conf])
+src/eval_fuse.py      결합 평가: 전신만 vs 머리만 vs 결합 (crowdhuman | ht21) → results/eval_fuse/
+src/homography.py     원근 변환 직접 구현(점 4쌍 → 8원 연립방정식). 실행하면 OpenCV와 같은 답인지 확인. crowd_alarm.py의 Floor가 이걸 씀
 src/cvio.py           한글 경로에서도 되는 imread/imwrite (Windows OpenCV는 한글 경로를 못 읽음)
 src/compare.py        YOLO vs DM-Count 비교 → results/cmp_*.jpg
 src/convert_crowdhuman.py  CrowdHuman .odgt → YOLO 머리 라벨 (data/head_yolo/)
@@ -141,7 +144,15 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
   - 결론: 타일링은 머리가 작게 찍히는 먼 카메라용. 시연 영상(HT21-03)은 보통 탐지 그대로.
   - 참고: head_ht21 기준을 0.01 단위로 다시 찾으면 0.22(찾은 비율 73.3%). 보고서·eval_video는 0.05 단위로 찾은 0.20(76.7%).
 - 보고서 4-5절에 타일링 반영 완료.
-- 다음 할 일: 전신·머리 결합 → 호모그래피 직접 구현 → 발표 자료.
+- **전신+머리 결합 실험** (2026-11-14, `fuse_count.py`·`eval_fuse.py`): **효과 없음.**
+  - CrowdHuman 검증(기준 다시 맞춤): 머리만 MAE 2.28·재현율 79.2% → 결합(전신 0.7) MAE 2.39·79.1%. 전신 기준을 낮출수록 더 나빠짐(0.5: 2.56, 0.3: 2.96).
+  - 이유: 전신이 찾는 사람은 머리 모델도 이미 찾음. 300장에서 '전신만' 박스 202개 중 진짜 새 사람 18개(9%), 중복 45개, 위쪽에 정답 머리 없음 139개.
+  - HT21-03: 전신(입력 1920)이 추가한 사람은 1,000프레임 합쳐 219명 → 변화 없음(73.3%→73.4%).
+  - HT21-03에서 박스 위치까지 맞힌 재현율은 head_ht21 60.7%·정밀도 82.8%(head_base 53.7%·74.4%) → '찾은 비율 73%'에는 헛박스가 섞여 있음.
+  - 발표 결론: "X+Y 결합"이 아니라 **"붐비면 Y(머리)가 X(전신)를 대신한다"**. 3절의 '전신·머리 연결 규칙'은 구현·검증했지만 인원 세기에는 쓰지 않음.
+- **호모그래피 직접 구현** (`homography.py`): 점 4쌍 → 식 8개 연립방정식(np.linalg.solve). OpenCV와 행렬 차이 1e-14, 점 변환 차이 0.002mm. `crowd_alarm.py`의 Floor가 이 함수를 쓰도록 교체(구역 안 인원이 예전과 다른 프레임 1/1000, 경계 위 점의 반올림 차이).
+- 보고서 4-6절(결합)·5절(호모그래피 직접 구현) 반영 완료 (11쪽).
+- 다음 할 일: 직접 촬영 영상 + 줄자로 잰 바닥으로 시연(팀원이 촬영) → 발표 자료.
 
 ## 8. 다른 PC에서 시작하기 (GitHub에 없는 것)
 > AI 도우미에게: 이 저장소를 새로 받은 PC라면 **먼저 `python src/check_setup.py`를 실행**해 빠진 항목을 사용자에게 알려 주고, 아래 방법으로 받도록 안내한다.

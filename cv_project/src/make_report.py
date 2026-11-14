@@ -4,6 +4,7 @@
   EVAL_CONF=0.15 python src/eval_heads.py     → results/eval_conf015/summary.json (인원 세기용 기준, 없으면 4-4절 생략)
   python src/eval_video.py data/ht21/HT21/train/HT21-03 → results/eval_video/      (현장 영상 평가, 없으면 5절 생략)
   python src/eval_tiles.py crowdhuman → python src/eval_tiles.py ht21 → results/eval_tiles/ (타일링, 없으면 4-5절 생략)
+  python src/eval_fuse.py crowdhuman → python src/eval_fuse.py ht21 → results/eval_fuse/   (전신+머리 결합, 없으면 4-6절 생략)
 usage: python src/make_report.py
 결과: results/head_detection_report.pdf (그림은 results/report/)
 """
@@ -36,6 +37,9 @@ VIDEO = json.loads(_vid.read_text(encoding="utf-8")) if _vid.exists() else None 
 _tl = ROOT / "results" / "eval_tiles"
 TILES = json.loads((_tl / "crowdhuman.json").read_text(encoding="utf-8")) if (_tl / "crowdhuman.json").exists() else None   # 타일링 (사진)
 TILES_V = json.loads((_tl / "ht21.json").read_text(encoding="utf-8")) if (_tl / "ht21.json").exists() else None             # 타일링 (영상)
+_fu = ROOT / "results" / "eval_fuse"
+FUSE = json.loads((_fu / "crowdhuman.json").read_text(encoding="utf-8")) if (_fu / "crowdhuman.json").exists() else None   # 전신+머리 결합 (사진)
+FUSE_V = json.loads((_fu / "ht21.json").read_text(encoding="utf-8")) if (_fu / "ht21.json").exists() else None             # 전신+머리 결합 (영상)
 DEV = 0 if torch.cuda.is_available() else "cpu"
 FIG.mkdir(parents=True, exist_ok=True)
 
@@ -353,6 +357,10 @@ def build():
     if TILES:
         story += tiles_section(W)
 
+    # ----- 4-6. 전신+머리 결합 -----
+    if FUSE:
+        story += fuse_section(W)
+
     # ----- 5. 현장 영상 평가 -----
     if VIDEO:
         story += video_section(W)
@@ -367,8 +375,8 @@ def build():
               B("P2는 메모리 때문에 batch 8로 학습했다(base는 16). 유효 batch는 64로 같지만 BatchNorm 통계는 작은 batch로 계산된다."),
               B("정답 인원은 무시 영역을 뺀 머리 라벨 개수다. 회색으로 지운 영역의 사람은 정답에도, 예측에도 들어가지 않는다."),
               P("다음 할 일", "h2"),
-              B("어두운 뒤통수 찾기: 현장 영상 추가 학습을 늘리거나, 전신 박스로 보완"),
-              B("전신·머리 결합 세기 (머리 중심이 전신 박스 위쪽 1/3 안이면 같은 사람)"),
+              B("어두운 뒤통수 찾기: 현장 영상 추가 학습 데이터를 늘리기 (크기·전신 보완으로는 안 풀림을 확인했으므로)"),
+              B("직접 촬영한 영상 + 줄자로 잰 바닥 네 점으로 시연 (바닥 크기 추정 오차 없애기)"),
               B("발표 자료와 시연 영상 정리 (src/crowd_alarm.py, 시연용 기준 표시 유지)")]
 
     doc = SimpleDocTemplate(str(PDF), pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
@@ -531,6 +539,42 @@ def tiles_section(W):
     return st
 
 
+def fuse_section(W):
+    md = FUSE["modes"]; FN = {"body": "전신만 (기존 X)", "head": "머리만 (Y①)", "fuse": "전신 + 머리 결합"}
+    st = [PageBreak(), P("4-6. 전신 + 머리 결합 세기 (src/fuse_count.py, 직접 구현)", "h2"),
+          P("전신은 한산할 때, 머리는 붐빌 때 강하다. 둘을 합치면 서로 놓친 사람을 채울 수 있는지 확인했다. "
+            "그냥 더하면 같은 사람을 두 번 세므로 ‘이 머리가 이 몸의 머리인가’를 판단해 짝지어야 한다."),
+          B("짝 규칙: 머리 박스 중심이 전신 박스의 가로 범위 안 + 위쪽 1/3 안이면 후보. 붐비면 한 머리가 여러 전신 박스에 들어가므로, "
+            "‘머리 중심 ↔ 전신 박스 윗변 가운데’ 거리가 가까운 짝부터 1:1로 확정한다."),
+          B("인원 = 짝 + 머리만 잡힌 사람 + 전신만 잡힌 사람."),
+          Spacer(1, 4)]
+    rows = [["방식", "머리 / 전신<br/>기준", "인원 오차<br/>(MAE)", "맞힌 사람<br/>(재현율)", "정밀도", "61명 이상<br/>찾은 비율", "짝 / 머리만 / 전신만"]]
+    for k in ("body", "head", "fuse"):
+        s = md[k]; p = s["parts"]
+        rows.append([FN[k], f"{'-' if k == 'body' else format(s['head_conf'], '.2f')} / {s['body_conf'] if s['body_conf'] is not None else '-'}",
+                     f"{s['MAE']:.2f}", pct(s["recall"]), pct(s["precision"]), pct(s["by_crowd"][-1]["ratio"]),
+                     f"{p['pair']:,} / {p['head_only']:,} / {p['body_only']:,}"])
+    st.append(table(rows, [W * .19, W * .12, W * .11, W * .12, W * .10, W * .12, W * .24]))
+    st.append(P(f"CrowdHuman 검증 {FUSE['images']:,}장. 결합은 항상 머리만보다 많이 세므로, ‘센 합 = 실제 합’이 되게 머리 기준을 다시 맞췄다"
+                f"(전신 기준 0.3·0.5·0.7 중 오차가 가장 작은 {FUSE['best_body_conf']}). 맞힌 사람: 머리 박스가 정답과 IoU 0.5 이상, "
+                "전신만 잡힌 경우는 아직 안 맞힌 정답 머리가 전신 박스 위쪽 1/3 안에 있으면 맞힘.", "cap"))
+    h, f = md["head"], md["fuse"]
+    st += [B(f"<b>결합해도 나아지지 않았다</b>: 인원 오차 {h['MAE']:.2f} → {f['MAE']:.2f}, 재현율 {pct(h['recall'])} → {pct(f['recall'])}. "
+             f"전신만 잡혀 추가된 사람은 {f['parts']['body_only']:,}명(전체의 {100 * f['parts']['body_only'] / (f['parts']['pair'] + f['parts']['head_only'] + f['parts']['body_only']):.1f}%)뿐이다."),
+           B("<b>이유</b>: 전신이 찾는 사람은 머리 모델도 이미 찾는다. 검증 300장에서 ‘전신만’ 박스 202개를 정답과 대조하니 "
+             "머리 모델이 놓친 진짜 사람은 18개(9%)였고, 45개는 이미 머리로 센 사람(머리가 숙여지거나 박스가 잘려 위쪽 1/3 밖 → 중복), "
+             "139개는 위쪽에 정답 머리가 없는 박스(머리가 화면 밖·가려짐, 무시 영역, 헛박스)였다."),
+           B("즉 전신 박스는 새 사람보다 <b>중복과 헛것을 더 많이</b> 가져온다. 전신 기준을 높일수록(0.3 → 0.7) 결합 결과가 머리만에 가까워지는 것도 같은 뜻이다.")]
+    if FUSE_V:
+        mv = FUSE_V["models"]; a, b = mv["head_ht21"]["head"], mv["head_ht21"]["fuse"]
+        st.append(B(f"현장 영상(HT21-03, 전신은 유리하게 입력 1920): 찾은 비율 {pct(a['found_ratio'])} → {pct(b['found_ratio'])}, "
+                    f"전신만 추가는 1,000프레임 합쳐 {b['parts']['body_only']}명. 위에서 본 밀집 장면에서는 전신이 거의 안 잡혀 보탤 것이 없다."))
+        st.append(B(f"참고: 이 영상에서 박스 위치까지 맞힌 비율(재현율)은 {pct(a['recall'])}, 정밀도 {pct(a['precision'])}다. "
+                    "‘찾은 비율’(개수 비교)에는 헛박스도 들어 있으므로, 실제로 놓친 사람은 개수 차이보다 많다."))
+    st.append(B("<b>결론</b>: 인원 세기는 머리만으로 한다. ‘X에 Y를 더한다’가 아니라 <b>‘붐비는 장면에서는 Y(머리)가 X(전신)를 대신한다’</b>는 것이 실험 결과다."))
+    return st
+
+
 VNAME = {"body": "전신 YOLO (입력 960)", "body_1920": "전신 YOLO (입력 1920)", "head_base": "머리 · 원본 구조",
          "head_p2": "머리 · P2 구조", "head_ht21": "머리 · 현장 영상 추가 학습"}
 
@@ -543,6 +587,8 @@ def video_section(W):
              f"{v['frames']}프레임 = 40초, 화면당 평균 {v['gt_mean_count']:.0f}명)으로 평가했다. 모든 프레임에 머리 박스 정답이 있다."),
            B(f"바닥: 화면의 네 점 → {v['floor_m'][0]:.0f}m × {v['floor_m'][1]:.0f}m 직사각형으로 원근 변환(호모그래피). "
              "넓이는 횡단보도 줄 간격 0.9m 가정 + 맨홀 타원 비율로 추정."),
+           B("원근 변환은 점 4쌍 → 식 8개 연립방정식을 푸는 코드를 직접 구현했다(src/homography.py). "
+             "OpenCV 함수와 행렬 차이 10<super>-14</super> 이하, 점 변환 차이 0.002mm로 같은 답."),
            B("밀도: 머리 박스 아래로 머리 높이×6 지점을 발 위치로 보고 바닥 좌표로 옮긴 뒤, 2m×2m 칸마다 ㎡당 인원. "
              "칸별로 1초 평균(2m 칸은 1명 차이가 ㎡당 0.25명이라 프레임마다 출렁임)."),
            B("정답(gt.txt)의 머리 박스도 똑같은 방법으로 밀도를 계산해 비교했다."),

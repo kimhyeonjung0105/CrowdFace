@@ -92,13 +92,16 @@ def ask_floor(frame, cfg_path):
     return cfg
 
 
+from homography import find_homography, apply_homography   # 원근 변환 직접 구현 (cv2.getPerspectiveTransform 대신)
+
+
 class Floor:
     """사진 좌표 ↔ 바닥 좌표(m). 바닥은 평면이므로 네 점 대응만으로 원근 변환 행렬(호모그래피) 3×3이 정해진다."""
     def __init__(self, pts, size):
         self.w, self.d = size
         self.quad = np.float32(pts)
         world = np.float32([[0, 0], [self.w, 0], [self.w, self.d], [0, self.d]])
-        self.H = cv2.getPerspectiveTransform(self.quad, world)        # 사진 → 바닥(m)
+        self.H = find_homography(self.quad, world)                    # 사진 → 바닥(m). 직접 구현(src/homography.py), OpenCV와 같은 답
         self.Hi = np.linalg.inv(self.H)                                # 바닥(m) → 사진 (칸 그리기용)
         nx, ny = int(np.ceil(self.w / CELL - 1e-6)), int(np.ceil(self.d / CELL - 1e-6))
         self.cells = []                                                # (i, j, 넓이㎡, 사진 위 꼭짓점 4개)
@@ -110,12 +113,12 @@ class Floor:
                 if area < MIN_AREA:
                     continue
                 c = np.float32([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]).reshape(-1, 1, 2)
-                self.cells.append((i, j, area, cv2.perspectiveTransform(c, self.Hi).reshape(-1, 2)))
+                self.cells.append((i, j, area, apply_homography(self.Hi, c).astype(np.float32)))
 
     def to_floor(self, xy):
         if len(xy) == 0:
             return np.zeros((0, 2), np.float32)
-        return cv2.perspectiveTransform(np.float32(xy).reshape(-1, 1, 2), self.H).reshape(-1, 2)
+        return apply_homography(self.H, xy)
 
     def density(self, feet):
         """발 위치(사진 좌표) → 칸별 ㎡당 인원, 구역 안 인원"""

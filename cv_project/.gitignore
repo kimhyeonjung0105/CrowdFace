@@ -22,3 +22,5 @@ runs/**
 !runs/head/*/args.yaml
 # 시연 영상 (크고, HT21 영상은 CC BY-NC-SA라 따로 공유)
 results/*.mp4
+# 초밀집 평가의 머리별 기록 (JHU 파생 데이터, 큼)
+results/eval_dense/heads.npz

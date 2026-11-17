@@ -61,6 +61,7 @@ src/eval_tiles.py     타일링 평가: 보통 vs 2×2 vs 3×3, 방식마다 신
 src/fuse_count.py     전신+머리 결합 세기: 머리 중심이 전신 박스 위쪽 1/3 안이면 같은 사람, 가까운 짝부터 1:1 (in.jpg out.jpg [모델 머리conf 전신conf])
 src/eval_fuse.py      결합 평가: 전신만 vs 머리만 vs 결합 (crowdhuman | ht21) → results/eval_fuse/
 src/homography.py     원근 변환 직접 구현(점 4쌍 → 8원 연립방정식). 실행하면 OpenCV와 같은 답인지 확인. crowd_alarm.py의 Floor가 이걸 씀
+src/eval_dense.py     초밀집 평가(JHU-CROWD++ 시험 1,600장): 머리(보통·타일링) vs P2PNet vs DM-Count vs 전신, 인원 구간별·빽빽함×머리 크기별 재현율 → results/eval_dense/
 src/cvio.py           한글 경로에서도 되는 imread/imwrite (Windows OpenCV는 한글 경로를 못 읽음)
 src/compare.py        YOLO vs DM-Count 비교 → results/cmp_*.jpg
 src/convert_crowdhuman.py  CrowdHuman .odgt → YOLO 머리 라벨 (data/head_yolo/)
@@ -152,7 +153,19 @@ data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ �
   - 발표 결론: "X+Y 결합"이 아니라 **"붐비면 Y(머리)가 X(전신)를 대신한다"**. 3절의 '전신·머리 연결 규칙'은 구현·검증했지만 인원 세기에는 쓰지 않음.
 - **호모그래피 직접 구현** (`homography.py`): 점 4쌍 → 식 8개 연립방정식(np.linalg.solve). OpenCV와 행렬 차이 1e-14, 점 변환 차이 0.002mm. `crowd_alarm.py`의 Floor가 이 함수를 쓰도록 교체(구역 안 인원이 예전과 다른 프레임 1/1000, 경계 위 점의 반올림 차이).
 - 보고서 4-6절(결합)·5절(호모그래피 직접 구현) 반영 완료 (11쪽).
-- 다음 할 일: 직접 촬영 영상 + 줄자로 잰 바닥으로 시연(팀원이 촬영) → 발표 자료.
+- **방향 결정 (2026-11-17)**: 주제 유지, 난이도 보강. A 초밀집 검증 → A' 탐지+밀도 지도 결합 → B 머리 추적으로 속도·정체 → C 기존 방법 비교 → D 직접 촬영.
+- **A. 초밀집 검증** (2026-11-17, `eval_dense.py`, JHU-CROWD++ v2.0 시험 1,600장, 사진당 중앙값 118명·최대 9,059명, 머리 폭 중앙값 11px. JHU로 학습·기준 정하기 안 함):
+  | 사진당 인원 | 0-50 | 51-200 | 201-500 | 501-1000 | 1001-3000 | 3001+ |
+  |---|---|---|---|---|---|---|
+  | 머리 보통 (센 비율 / MAE) | 89% / 6 | 82% / 31 | 70% / 111 | 55% / 327 | 31% / 1075 | 6% / 4611 |
+  | 머리 타일 2×2 | 87% / 6 | 80% / 30 | 71% / 104 | 60% / 288 | 44% / 884 | 12% / 4330 |
+  | P2PNet (기존, 점) | 184% / 30 | 129% / 49 | 118% / 95 | 112% / 194 | 107% / 376 | 86% / 1204 |
+  | DM-Count (기존, 밀도 지도) | 166% / 20 | 133% / 42 | 119% / 80 | 109% / 149 | 99% / 301 | 79% / 1208 |
+  | 전신 YOLO | 50% / 13 | 12% / 97 | 3% / 313 | 1% / 678 | 0% | 0% |
+  - **머리 탐지는 초밀집에서 무너진다.** 200명까지는 머리 탐지가 가장 정확(MAE 6·31 vs 밀도 지도 20·42), 500명 넘으면 밀도 지도가 훨씬 정확. 밀도 지도는 한산한 사진을 30~80% 부풀림 → **둘을 섞을 근거**(A').
+  - 원인 두 가지(같은 머리 크기 안에서 비교): ① 작은 머리 — 8px 미만 재현율 1~21%, 8~16px 23~47% ② **머리가 겹칠 만큼 빽빽함**(빽빽함 c = 이웃 머리 3개 평균 거리 ÷ 머리 폭 < 1) — 32px 이상 머리도 c<1이면 45%(c 2~3이면 78~80%). P2PNet은 c<1에서도 68%로 덜 무너짐.
+  - ㎡ 환산(근사, HT21-03 카메라 기준): 사진 속 머리 폭 1개 ≈ 바닥 0.53m → **c≈1.0 ↔ ㎡당 4명, c≈0.9 ↔ 5명**. 즉 이 각도의 카메라에서는 경계·심각 단계가 정확히 탐지가 무너지는 구간. 위에서 수직으로 보면 같은 밀도에서 c가 훨씬 커서(머리 실제 폭 기준) 덜 무너짐 → 카메라는 높고 수직일수록 유리.
+- 다음 할 일: A' 탐지+밀도 지도 결합(칸마다 어느 쪽을 믿을지 규칙) → B 움직임 → 발표 자료.
 
 ## 8. 다른 PC에서 시작하기 (GitHub에 없는 것)
 > AI 도우미에게: 이 저장소를 새로 받은 PC라면 **먼저 `python src/check_setup.py`를 실행**해 빠진 항목을 사용자에게 알려 주고, 아래 방법으로 받도록 안내한다.
@@ -186,6 +199,12 @@ python -c "import zipfile; z=zipfile.ZipFile('HT21.zip'); z.extractall('.', [n f
 - Git Bash의 unzip은 4GB 넘는 zip을 못 풀어서 파이썬으로 푼다. 바닥 설정 `HT21/train/HT21-03/img1.floor.json`은 CLAUDE.md 7절 값으로 다시 만든다:
   `{"floor": [[462,200],[1458,200],[1773.5,1010],[146.5,1010]], "size": [10,28]}`
 - 추가 학습 데이터: `python src/convert_ht21.py` → `python src/train_head.py ht21 20 960 8`
+
+JHU-CROWD++ 초밀집 평가용 (학술·비상업 전용, 3.1GB — GitHub에 올리지 않음):
+```bash
+pip install gdown && mkdir -p data/jhu && cd data/jhu && gdown --folder "https://drive.google.com/drive/folders/1FkdvHyAom1B2aVj6_jZpZPW01sQNiI7n"
+python -c "import zipfile; zipfile.ZipFile('jhucrowdv2.0/jhu_crowd_v2.0.zip').extractall('.')"     # → data/jhu/jhu_crowd_v2.0/{train,val,test}
+```
 
 CrowdHuman 다운로드 (Hugging Face `sshao0516/CrowdHuman`, CC BY-NC 4.0 — **받은 파일은 절대 GitHub에 올리지 않는다**):
 ```bash

@@ -48,16 +48,16 @@ def nms(boxes, conf, thr=NMS_IOU):
     return np.array(keep, int)
 
 
-def detect_tiled(model, img, n=2, imgsz=960, conf=0.15, full=True, **kw):
+def detect_tiled(model, img, n=2, imgsz=960, conf=0.15, full=True, max_det=1000, **kw):
     """img(BGR 배열) → (박스 [N,4] xyxy 원본 좌표, 신뢰도 [N]).  n=1이면 보통 탐지와 같다."""
     H, W = img.shape[:2]
     boxes, confs = [], []
     if full or n == 1:                                               # 4) 전체 사진 탐지
-        r = model.predict(img, imgsz=imgsz, conf=conf, max_det=1000, verbose=False, **kw)[0]
+        r = model.predict(img, imgsz=imgsz, conf=conf, max_det=max_det, verbose=False, **kw)[0]
         boxes.append(r.boxes.xyxy.cpu().numpy()); confs.append(r.boxes.conf.cpu().numpy())
     if n > 1:
         ts = tiles(W, H, n)
-        rs = model.predict([img[y0:y1, x0:x1] for x0, y0, x1, y1 in ts], imgsz=imgsz, conf=conf, max_det=1000,
+        rs = model.predict([img[y0:y1, x0:x1] for x0, y0, x1, y1 in ts], imgsz=imgsz, conf=conf, max_det=max_det,
                            verbose=False, **kw)                      # 조각들을 한 묶음(batch)으로 탐지
         for (x0, y0, x1, y1), r in zip(ts, rs):
             b = r.boxes.xyxy.cpu().numpy(); c = r.boxes.conf.cpu().numpy()

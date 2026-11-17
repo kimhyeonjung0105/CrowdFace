@@ -24,3 +24,5 @@ runs/**
 results/*.mp4
 # 초밀집 평가의 머리별 기록 (JHU 파생 데이터, 큼)
 results/eval_dense/heads.npz
+# 결합 평가용 탐지·밀도 지도 저장 (JHU 파생, 큼)
+results/eval_hybrid/cache_*.npz

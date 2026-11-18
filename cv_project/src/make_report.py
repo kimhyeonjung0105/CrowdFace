@@ -69,7 +69,7 @@ def read_run(k):
     f = lambda r, c: float(r[c])
     ep = [int(float(r["epoch"])) for r in rows]
     m50 = [f(r, "metrics/mAP50(B)") for r in rows]; m95 = [f(r, "metrics/mAP50-95(B)") for r in rows]
-    fit = [0.1 * a + 0.9 * b for a, b in zip(m50, m95)]           # Ultralytics가 best.pt를 고르는 기준
+    fit = [0.1 * a + 0.9 * b for a, b in zip(m50, m95)]           # 예전 Ultralytics의 best.pt 기준. 8.4.208은 mAP50-95만 씀(utils/metrics.py fitness) — 우리 세 모델은 두 기준의 best epoch가 같음
     b = int(np.argmax(fit)); r = rows[b]
     # 학습 시간: resume으로 이어서 학습하면 time 열이 0부터 다시 쌓이므로, 줄어드는 지점마다 앞 구간을 더함
     t = [f(x, "time") for x in rows]

@@ -17,6 +17,7 @@ import numpy as np, cv2
 ROOT = _pl.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from crowd_alarm import Floor, Alarm, Smoother, SMOOTH, level_of, LEVELS, COUNT_CONF, set_levels
+from cvio import imread
 from ultralytics import YOLO
 
 MODELS = {   # 이름: (가중치, 신뢰도 기준, 클래스, 입력 크기 — None이면 --imgsz)
@@ -32,17 +33,18 @@ NAME = {"gt": "정답", "body": "전신 YOLO (기존 X)", "body_1920": "전신 Y
         "head_p2": "머리 · P2 구조 (직접 수정)", "head_ht21": "머리 · 현장 영상 추가 학습"}
 COLOR = {"gt": "#3d3d3d", "body": "#2a78d6", "body_1920": "#8fb8ea", "head_base": "#eb6834", "head_p2": "#1baf7a", "head_ht21": "#8a4fd3"}
 DEMO = (1.0, 1.33, 1.67)   # 시연 모드 기준 = 서울시 기준(3·4·5)의 1/3. 실제 영상이 주의 단계에 못 미쳐 경보 로직을 시험하려고 씀
-FOOT = 6.0   # crowd_alarm.py와 같은 발 위치 규칙
+FOOT = 6.0   # 예전 가정값(다른 평가 코드가 가져다 씀). 이 평가는 foot_calib.py로 출처마다 따로 잰 배수를 쓴다
 
 
-def feet_from(boxes, kind):
-    """바닥 위 점: 머리는 머리 박스 아래로 머리 높이×FOOT, 전신은 박스 아래 가운데(발)."""
+def feet_from(boxes, kind, foot=None):
+    """바닥 위 점: 머리는 머리 박스 아래로 머리 높이×foot, 전신은 박스 아래 가운데(발)."""
+    foot = FOOT if foot is None else foot
     if len(boxes) == 0:
         return np.zeros((0, 2))
     x = (boxes[:, 0] + boxes[:, 2]) / 2
     if kind == "body":
         return np.stack([x, boxes[:, 3]], 1)
-    return np.stack([x, boxes[:, 3] + FOOT * (boxes[:, 3] - boxes[:, 1])], 1)
+    return np.stack([x, boxes[:, 3] + foot * (boxes[:, 3] - boxes[:, 1])], 1)
 
 
 def main():
@@ -60,10 +62,24 @@ def main():
 
     rec = {k: {"count": [], "roi": [], "maxd": []} for k in ["gt"] + list(MODELS)}
     smooth = {k: Smoother(SMOOTH * fps) for k in rec}     # crowd_alarm.py와 같은 칸별 1초 평균 (정답에도 똑같이)
+    # 발 배수: 정답 박스와 모델마다 박스 모양이 달라 따로 잰다(정답 발 위치는 쓰지 않음 — 전신 YOLO로 잼)
+    from foot_calib import calibrate_foot
+    body_m = YOLO(str(ROOT / "models" / "yolo11n.pt"))
+    cal = [imread(p) for p in imgs[::max(1, len(imgs) // 40)]]
+    def gt_boxes(p):
+        g = gt[gt[:, 0] == int(p.stem)][:, 2:6]; return np.c_[g[:, :2], g[:, :2] + g[:, 2:]]
+    cal_gt = iter([gt_boxes(p) for p in imgs[::max(1, len(imgs) // 40)]])
+    foot = {"gt": calibrate_foot(cal, lambda im: next(cal_gt), body_m)}
+    for k, (w, conf, cls, sz) in MODELS.items():
+        if not k.startswith("body"):
+            mk = YOLO(str(ROOT / "models" / w))
+            foot[k] = calibrate_foot(cal, lambda im: mk.predict(im, imgsz=sz or a.imgsz, conf=conf, max_det=1000, verbose=False)[0].boxes.xyxy.cpu().numpy(), body_m)
+    print("발 배수:", {k: f"×{v[0]:.2f} ({v[1]}명)" for k, v in foot.items()}, flush=True)
+
     def add(k, boxes, kind):
         rec[k]["count"].append(len(boxes))
         if floor:
-            cells, n_in = floor.density(feet_from(boxes, kind))
+            cells, n_in = floor.density(feet_from(boxes, kind, foot[k][0] if k in foot else None))
             rec[k]["roi"].append(n_in); rec[k]["maxd"].append(float(smooth[k]([c[0] for c in cells]).max()))
 
     for p in imgs:                                     # 정답
@@ -78,6 +94,7 @@ def main():
 
     g = {x: np.array(v) for x, v in rec["gt"].items()}
     res = {"seq": name, "frames": len(imgs), "imgsz": a.imgsz, "gt_mean_count": float(g["count"].mean()),
+           "foot": {k: {"factor": v[0], "pairs": v[1]} for k, v in foot.items()},
            "conf": {k: v[1] for k, v in MODELS.items()}, "models": {}}
     def alarms(maxd, roi):
         al = Alarm(); [al.update(i / fps, d, n) for i, (d, n) in enumerate(zip(maxd, roi))]; return al.rows

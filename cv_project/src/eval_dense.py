@@ -118,18 +118,21 @@ def floor_scale():
     seq = ROOT / "data/ht21/HT21/train/HT21-03"
     cfg = json.loads((seq / "img1.floor.json").read_text(encoding="utf-8")); fl = Floor(cfg["floor"], cfg["size"])
     gt = np.loadtxt(seq / "gt/gt.txt", delimiter=","); gt = gt[gt[:, 7] <= 3]
+    # 발 배수: eval_video.py가 전신 YOLO로 잰 정답 박스 기준 값 (예전 고정값 6은 1.5m 어긋났음)
+    vj = ROOT / "results/eval_video/HT21-03.json"
+    K = json.loads(vj.read_text(encoding="utf-8")).get("foot", {}).get("gt", {}).get("factor", 6.0) if vj.exists() else 6.0
     ratios = []
     for f in range(1, 1001, 10):
         g = gt[gt[:, 0] == f][:, 2:6]
         if len(g) < 10: continue
         cxy = np.c_[g[:, 0] + g[:, 2] / 2, g[:, 1] + g[:, 3] / 2]
-        feet = np.c_[cxy[:, 0], g[:, 1] + g[:, 3] + 6 * g[:, 3]]
+        feet = np.c_[cxy[:, 0], g[:, 1] + g[:, 3] + K * g[:, 3]]
         fxy = fl.to_floor(feet)
         inside = (fxy[:, 0] > 1) & (fxy[:, 0] < fl.w - 1) & (fxy[:, 1] > 1) & (fxy[:, 1] < fl.d - 1)
         c = knn_mean(cxy) / g[:, 2]; dm = knn_mean(fxy)
         ratios += list((dm / c)[inside & np.isfinite(c)])
     w_eff = float(np.median(ratios))
-    return {"w_eff_m": w_eff, "rho_of_c": {f"{c}": round((1.075 / (c * w_eff)) ** 2, 2) for c in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)},
+    return {"foot_factor": K, "w_eff_m": w_eff, "rho_of_c": {f"{c}": round((1.075 / (c * w_eff)) ** 2, 2) for c in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)},
             "c_of_rho": {f"{r}": round(1.075 / (np.sqrt(r) * w_eff), 2) for r in (2, 3, 4, 5, 7.7, 10)}}
 
 

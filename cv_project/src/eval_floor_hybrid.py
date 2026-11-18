@@ -16,6 +16,13 @@ seq = ROOT / "data/ht21/HT21/train/HT21-03"; imgs = sorted((seq / "img1").glob("
 gt = np.loadtxt(seq / "gt/gt.txt", delimiter=","); gt = gt[gt[:, 7] <= 3]
 cfg = json.loads((seq / "img1.floor.json").read_text(encoding="utf-8")); fl = Floor(cfg["floor"], cfg["size"])
 DM = H.DensityMap(); m = YOLO(str(ROOT / "models/head_ht21.pt"))
+# 발 배수: 정답 박스와 모델 박스 각각 전신 YOLO로 잰다 (foot_calib.py, 2026-11-18: 예전 고정값 6은 1.5m 어긋났음)
+from foot_calib import calibrate_foot
+_cal = sorted((seq / "img1").glob("*.jpg"))[::25]; _calimg = [imread(p) for p in _cal]
+_g = iter([(lambda g: np.c_[g[:, :2], g[:, :2] + g[:, 2:]])(gt[gt[:, 0] == int(p.stem)][:, 2:6]) for p in _cal])
+K_GT = calibrate_foot(_calimg, lambda im: next(_g))[0]
+K_DET = calibrate_foot(_calimg, lambda im: m.predict(im, imgsz=960, conf=0.20, max_det=3000, verbose=False)[0].boxes.xyxy.cpu().numpy())[0]
+print(f"발 배수: 정답 박스 ×{K_GT:.2f}, 모델 박스 ×{K_DET:.2f}")
 
 def cells_from(points, weights):
     """바닥 점(가중치) → 칸별 ㎡당 인원"""
@@ -25,12 +32,12 @@ def cells_from(points, weights):
         k = (int(x // 2), int(y // 2)); cnt[k] = cnt.get(k, 0) + wt
     return np.array([cnt.get((i, j), 0) / a for i, j, a, _ in fl.cells]), float(weights[ok].sum())
 
-def feet_boxes(b): return np.c_[(b[:, 0] + b[:, 2]) / 2, b[:, 3] + 6 * (b[:, 3] - b[:, 1])]
+def feet_boxes(b, k=None): return np.c_[(b[:, 0] + b[:, 2]) / 2, b[:, 3] + (K_DET if k is None else k) * (b[:, 3] - b[:, 1])]
 
 def dm_points(d, sc, line_h):
     """밀도 지도 칸마다: 머리 중심 = 칸 중심, 머리 높이 = 직선 h(y) → 발 = y + h/2 + 6h"""
     ii, jj = np.nonzero(d > 1e-4); x = (jj + 0.5) * sc[0]; y = (ii + 0.5) * sc[1]; h = line_h(y)
-    return np.c_[x, y + 0.5 * h + 6 * h], d[ii, jj]
+    return np.c_[x, y + 0.5 * h + K_DET * h], d[ii, jj]
 
 R = {k: {"maxd": [], "roi": []} for k in ("gt", "det", "dm", "hyb1")}; S = {k: Smoother(fps) for k in R}
 for p in imgs:
@@ -40,7 +47,7 @@ for p in imgs:
     hb = b.copy(); hb[:, 2] = hb[:, 0] + (b[:, 3] - b[:, 1])          # 높이 직선을 맞추려고 폭 자리에 높이를 넣음
     line_h = H.head_size_line(hb)
     out = {}
-    out["gt"] = cells_from(feet_boxes(gb), np.ones(len(gb)))
+    out["gt"] = cells_from(feet_boxes(gb, K_GT), np.ones(len(gb)))
     out["det"] = cells_from(feet_boxes(b), np.ones(len(b)))
     out["dm"] = cells_from(*dm_points(d, sc, line_h))
     _, cl = H.hybrid_count(b, d, sc, return_map=True); use = np.kron(cl[..., 2], np.ones((8, 8)))[:d.shape[0], :d.shape[1]].astype(bool)

@@ -10,7 +10,9 @@ usage:
                             둘 다 없으면 창이 떠서 바닥 네 점을 클릭하고, 크기는 터미널에 입력 → <입력>.floor.json 에 저장해 다음부터 재사용
   --model head_base         models/ 안의 머리 가중치 이름 (P2 구조는 head_p2)
   --imgsz 960               YOLO 입력 크기 (학습 크기 960, 사람이 작게 찍히면 1280 이상)
-  --foot 6                  머리 → 발 위치 보정(머리 박스 높이의 몇 배 아래가 발인지). 바로 위에서 찍으면 0
+  --foot auto               머리 → 발 위치 보정(머리 박스 높이의 몇 배 아래가 발인지). 기본 auto: 전신 YOLO(X)로
+                            발까지 보이는 사람을 찾아 이 카메라·이 머리 모델 기준 배수를 잰다(foot_calib.py).
+                            숫자를 주면 그 값(예전 가정 6), 바로 위에서 찍으면 0
   --max-sec N               영상 앞부분 N초만 처리 (시험용)
   --levels 3,4,5            주의·경계·심각 기준(서울시). 실제 영상이 기준에 못 미칠 때 경보 동작을 보이려면
                             낮춘 기준(예: 1.5,2,2.5)을 쓰고, 화면에 '시연용 기준'으로 표시된다
@@ -242,6 +244,7 @@ def draw(frame, b, cells, n_in, floor, cur, alarm, held, t, args):
         dr.rectangle([x0, y + 5, x0 + 18, y + 23], fill=c)
         dr.text((x0 + 28, y), f"{name}  ㎡당 {th:g}명 이상", font=R(19), fill=(225, 230, 240)); y += 30
     note = [f"머리: 직접 학습한 YOLO11n ({args.model})", f"바닥 {floor.w:g}m × {floor.d:g}m, 원근 변환 · 칸 {CELL:g}m",
+            f"발: 머리 높이 × {args.foot:.2f} 아래 (전신 보정)",
             *LEVEL_NOTE]
     for i, l in enumerate(note):
         dr.text((x0, H - 28 * len(note) - 12 + i * 28), l, font=R(16), fill=(150, 165, 185))
@@ -269,13 +272,37 @@ class FrameDir:
         self.i = int(v)
 
 
+def foot_factor(a, src, cap, first, model, cfg, cfg_path):
+    """발 배수 정하기: 숫자로 주면 그 값, auto면 저장된 값(같은 머리 모델) 또는 전신 YOLO로 새로 잼"""
+    if a.foot != "auto":
+        return float(a.foot)
+    key = f"{a.model}@{a.imgsz}/{a.conf:g}"                     # 배수는 머리 박스 모양(모델·입력·기준)에 따라 다름
+    saved = cfg.get("foot", {})
+    if key in saved:
+        print(f"발 배수 불러옴: × {saved[key]:.2f} ({key})"); return saved[key]
+    from foot_calib import calibrate_foot
+    frames = [first]
+    if cap is not None:                                        # 영상이면 고르게 40장
+        n = len(cap.files) if isinstance(cap, FrameDir) else int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        for idx in np.linspace(0, max(n - 1, 0), 40).astype(int)[1:]:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx)); ok, fr = cap.read()
+            if ok: frames.append(fr)
+    head_fn = lambda im: model.predict(im, imgsz=a.imgsz, conf=a.conf, max_det=1000, device=a.device, verbose=False)[0].boxes.xyxy.cpu().numpy()
+    k, n_pairs = calibrate_foot(frames, head_fn)
+    print(f"발 배수 자동 보정: × {k:.2f} (전신 박스와 짝지은 사람 {n_pairs}명{', 모자라서 기본값' if n_pairs < 30 else ''})")
+    if n_pairs >= 30:
+        cfg.setdefault("foot", {})[key] = round(k, 3)
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+    return k
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("src"); ap.add_argument("out")
     ap.add_argument("--floor"); ap.add_argument("--size")
     ap.add_argument("--model", default="head_base"); ap.add_argument("--imgsz", type=int, default=960)
     # 신뢰도 기준 0.15: CrowdHuman 검증 4,370장에서 '센 인원 합 = 실제 인원 합'(100.4%)이 되는 값 (0.25면 87%로 덜 셈)
-    ap.add_argument("--conf", type=float, default=COUNT_CONF); ap.add_argument("--foot", type=float, default=6.0)
+    ap.add_argument("--conf", type=float, default=COUNT_CONF); ap.add_argument("--foot", default="auto")
     ap.add_argument("--max-sec", type=float); ap.add_argument("--device", default=None)
     ap.add_argument("--levels", default="3,4,5", help="주의,경계,심각 기준(㎡당 명). 시연 모드 예: 1.5,2,2.5")
     a = ap.parse_args()
@@ -296,6 +323,7 @@ def main():
         cfg = ask_floor(first, cfg_path)
     floor = Floor(cfg["floor"], cfg["size"])
     model = YOLO(str(ROOT / "models" / f"{a.model}.pt"))
+    a.foot = foot_factor(a, src, cap if is_video else None, first, model, cfg, cfg_path)
 
     if not is_video:
         b, cells, n_in = process(first, model, floor, a)

@@ -7,7 +7,7 @@
 - 프로젝트 이름 **CrowdFace** (GitHub 저장소 이름도 같게). 학습 데이터셋 CrowdHuman과 헷갈리지 말 것.
 - 강남대학교 컴퓨터비전 미니프로젝트 (202104183 김현중, 202204201 김태섭)
 - 일정: 5주차(10/16) 계획서(주제) 발표 완료 → **중간 발표(미니프로젝트 #2, 2026-11 공지)** → **14주차 최종 발표·시연(12월 셋째 주쯤)**
-  - claude.ai 페이지(만든 계정 전용, 다른 계정은 Share로 공유받아야 열림): 중간 발표 자료 https://claude.ai/artifact/SEBzJkU6KdMkXfo6nrbhBD · YOLO11 학습 과정 해설(원본 코드 전체 + 해설) https://claude.ai/artifact/QupsSEAb49zHyrgRCFdjTx · 최종 발표 초안 https://claude.ai/artifact/UBK654XpUndFrCvqPewSxF
+  - claude.ai 페이지(만든 계정 전용, 다른 계정은 Share로 공유받아야 열림): 중간 발표 자료 https://claude.ai/artifact/SEBzJkU6KdMkXfo6nrbhBD · YOLO11 학습 과정 해설 https://claude.ai/artifact/QupsSEAb49zHyrgRCFdjTx · YOLO11 학습 전체 코드(원문) https://claude.ai/artifact/8WeFp7nZ3n76UyVwmcG5CD (같은 내용 docs/YOLO11_학습_전체코드.md) · 최종 발표 초안 https://claude.ai/artifact/UBK654XpUndFrCvqPewSxF
   - 중간 발표 평가 항목: 이미지 전처리 설명 · 1차 참조 코드 실행 상황 · 구현 진척도(핵심 기능 동작) · 기술적 이해도 · 향후 계획. 발표 자료는 claude.ai 아티팩트 'CrowdFace 중간 발표'(10장·7~8분, 발표자 노트 포함).
 - 과제 조건: 기존 구현 **X**에 반드시 **추가 기능 Y**를 붙여야 함. 참조 코드는 본인 GitHub에 올려 주소 제출, 발표 PDF는 이러닝 제출.
 - **과제 목적: 기존 코드를 다르게 적용하며 컴퓨터비전을 공부하는 것.** 새 기술을 가져다 붙이는 게 아니라 기존 기능을 다른 방식으로 쓰는 것이 중요함 (공지 예: 마스크 판별 코드 → 썬글라스 추가).

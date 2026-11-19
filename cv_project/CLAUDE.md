@@ -77,6 +77,9 @@ src/eval_heads.py     전신 vs 머리 인원 오차·머리 크기별 재현율
 src/bench_speed.py    세 모델 번갈아 속도 재측정 → summary.json speed_ms 덮어씀 (eval 뒤에 실행)
 src/make_report.py    학습 결과 PDF → results/head_detection_report.pdf
 src/check_setup.py    다른 PC에서 clone 후 빠진 것 점검 (환경·refs·가중치·데이터) → 8절
+docs/YOLO11_학습_전체코드.md      학습 경로 원문 + 한 줄씩 주석 (8.4.208)
+docs/YOLO11_사람탐지_원본코드.md  기존 X 예측 경로 원문 + 주석 (팀원 공부 자료, 8.4.211, PDF에 핵심 표시)
+docs/YOLO11_모델구조_설명.md      backbone·넥·Detect 그림 설명 (그림 docs/figs/)
 data/   입력  models/ 가중치  refs/ 참조 저장소(git clone)  results/ 결과
 ```
 - 경로는 모두 cv_project 폴더 기준(ROOT). 새 코드도 이 방식을 따른다.
